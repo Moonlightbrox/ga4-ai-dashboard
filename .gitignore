@@ -1,0 +1,16 @@
+# secrets
+.env
+credentials.json
+*.json
+
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# streamlit
+.streamlit/
+
+# OS
+.DS_Store
+Thumbs.db
