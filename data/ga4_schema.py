@@ -184,3 +184,134 @@ GA4_DIMENSIONS: set[str] = {
     "shippingTier",                # Shipping option / tier
     "currencyCode",                # Transaction currency
 }
+
+
+# =====================================================================
+# CORE REPORT FIELD METADATA (UI-FRIENDLY LABELS)
+# =====================================================================
+
+CORE_REPORT_METRICS: dict[str, dict[str, str]] = {
+    "totalUsers": {
+        "label": "Total Users",
+        "description": "All users in the date range",
+    },
+    "activeUsers": {
+        "label": "Active Users",
+        "description": "Users with at least one engaged session",
+    },
+    "newUsers": {
+        "label": "New Users",
+        "description": "First-time users",
+    },
+    "sessions": {
+        "label": "Sessions",
+        "description": "Total sessions",
+    },
+    "engagedSessions": {
+        "label": "Engaged Sessions",
+        "description": "Sessions considered engaged",
+    },
+    "userEngagementDuration": {
+        "label": "Engagement Duration",
+        "description": "Total engagement time (seconds)",
+    },
+    "transactions": {
+        "label": "Transactions",
+        "description": "Completed purchase events",
+    },
+    "purchaseRevenue": {
+        "label": "Purchase Revenue",
+        "description": "Revenue from purchases",
+    },
+    "screenPageViews": {
+        "label": "Screen/Page Views",
+        "description": "Total page and screen views",
+    },
+    "itemViewEvents": {
+        "label": "Item View Events",
+        "description": "View item event count",
+    },
+    "addToCarts": {
+        "label": "Add To Carts",
+        "description": "Add to cart event count",
+    },
+    "checkouts": {
+        "label": "Checkouts",
+        "description": "Begin checkout event count",
+    },
+    "itemsViewed": {
+        "label": "Items Viewed",
+        "description": "Items viewed count",
+    },
+    "itemsAddedToCart": {
+        "label": "Items Added To Cart",
+        "description": "Items added to cart count",
+    },
+    "itemsCheckedOut": {
+        "label": "Items Checked Out",
+        "description": "Items checked out count",
+    },
+    "itemsPurchased": {
+        "label": "Items Purchased",
+        "description": "Items purchased count",
+    },
+    "itemRevenue": {
+        "label": "Item Revenue",
+        "description": "Revenue attributed to items",
+    },
+}
+
+CORE_REPORT_DIMENSIONS: dict[str, dict[str, str]] = {
+    "country": {
+        "label": "Country",
+        "description": "User country",
+    },
+    "deviceCategory": {
+        "label": "Device Category",
+        "description": "Device type (desktop, mobile, tablet)",
+    },
+    "sessionSource": {
+        "label": "Session Source",
+        "description": "Traffic source for the session",
+    },
+    "sessionMedium": {
+        "label": "Session Medium",
+        "description": "Traffic medium for the session",
+    },
+    "date": {
+        "label": "Date",
+        "description": "Calendar date (YYYYMMDD)",
+    },
+    "landingPage": {
+        "label": "Landing Page",
+        "description": "First page of the session",
+    },
+    "operatingSystem": {
+        "label": "Operating System",
+        "description": "User operating system",
+    },
+    "browser": {
+        "label": "Browser",
+        "description": "User browser",
+    },
+    "itemName": {
+        "label": "Item Name",
+        "description": "Product name",
+    },
+    "itemCategory": {
+        "label": "Item Category",
+        "description": "Product category",
+    },
+    "city": {
+        "label": "City",
+        "description": "User city",
+    },
+    "pagePath": {
+        "label": "Page Path",
+        "description": "Page URL path",
+    },
+    "pageTitle": {
+        "label": "Page Title",
+        "description": "Page title",
+    },
+}

@@ -6,6 +6,9 @@ import anthropic
 from analytics.raw_reports import get_all_core_reports
 from components.date_selector import get_date_range
 from components.format import format_dataframe_numbers
+from data.ga4_schema import CORE_REPORT_DIMENSIONS, CORE_REPORT_METRICS
+from data.ga4_service import fetch_ga4_report
+from data.preprocess import ga4_to_dataframe
 
 
 st.set_page_config(
@@ -22,6 +25,14 @@ if "chat_messages" not in st.session_state:
 if "last_prompt" not in st.session_state:
     st.session_state.last_prompt = None
 
+if "user_reports" not in st.session_state:
+    st.session_state.user_reports = {}
+
+if "custom_report_error" not in st.session_state:
+    st.session_state.custom_report_error = None
+
+if "custom_report_success" not in st.session_state:
+    st.session_state.custom_report_success = None
 
 st.title("AI Scoping Test")
 st.caption("Prototype page for AI logic, report scoping, and user flow")
@@ -39,6 +50,7 @@ except Exception as exc:
     core_reports = {}
     st.sidebar.error(f"Failed to load reports: {exc}")
 
+combined_reports = {**core_reports, **st.session_state.user_reports}
 
 with col_reports:
     st.subheader("\U0001F4CA Reports")
@@ -49,21 +61,50 @@ with col_reports:
     select_basic = bulk_cols[1].button("Select basic reports")
     select_user = bulk_cols[2].button("Select user reports")
 
-    if select_all or select_basic:
+    if select_all:
+        for report in combined_reports.values():
+            st.session_state[f"report_{report['id']}"] = True
+
+    if select_basic:
+        for report in combined_reports.values():
+            st.session_state[f"report_{report['id']}"] = False
         for report in core_reports.values():
             st.session_state[f"report_{report['id']}"] = True
 
     if select_user:
-        # TODO: Implement user-defined reports selection (Phase 3).
-        st.info("User-defined reports are not available yet.")
+        # TODO: Implement user-defined report groups (Phase 3).
+        for report in combined_reports.values():
+            st.session_state[f"report_{report['id']}"] = False
+        if not st.session_state.user_reports:
+            st.info("No user reports available yet.")
+        else:
+            for report in st.session_state.user_reports.values():
+                st.session_state[f"report_{report['id']}"] = True
 
     selected_reports = []
-    for report in core_reports.values():
-        checked = st.checkbox(
-            report["name"],
-            help=report["description"],
-            key=f"report_{report['id']}",
-        )
+    ordered_reports = list(core_reports.values()) + list(st.session_state.user_reports.values())
+    for report in ordered_reports:
+        is_user_report = report["id"] in st.session_state.user_reports
+        if is_user_report:
+            checkbox_col, delete_col = st.columns([6, 1])
+            with checkbox_col:
+                checked = st.checkbox(
+                    report["name"],
+                    help=report["description"],
+                    key=f"report_{report['id']}",
+                )
+            with delete_col:
+                if st.button("\U0001F5D1", key=f"delete_{report['id']}", help="Delete report"):
+                    st.session_state.user_reports.pop(report["id"], None)
+                    st.session_state.pop(f"report_{report['id']}", None)
+                    st.rerun()
+        else:
+            checked = st.checkbox(
+                report["name"],
+                help=report["description"],
+                key=f"report_{report['id']}",
+            )
+
         if checked:
             selected_reports.append(report)
 
@@ -93,11 +134,76 @@ with col_reports:
 
     st.divider()
 
-    with st.expander("Advanced: Custom Report Builder (Coming Soon)"):
+    with st.expander("Advanced: Custom Report Builder"):
         st.caption("Build custom reports using metrics and dimensions")
-        st.text_input("Dimensions", disabled=True)
-        st.text_input("Metrics", disabled=True)
-        st.button("Add report", disabled=True)
+
+        metric_options = list(CORE_REPORT_METRICS.keys())
+        dimension_options = list(CORE_REPORT_DIMENSIONS.keys())
+
+        def metric_label(metric_id):
+            meta = CORE_REPORT_METRICS[metric_id]
+            return f"{meta['label']} - {meta['description']} ({metric_id})"
+
+        def dimension_label(dimension_id):
+            meta = CORE_REPORT_DIMENSIONS[dimension_id]
+            return f"{meta['label']} - {meta['description']} ({dimension_id})"
+
+        selected_dimensions = st.multiselect(
+            "Dimensions",
+            dimension_options,
+            format_func=dimension_label,
+        )
+        selected_metrics = st.multiselect(
+            "Metrics",
+            metric_options,
+            format_func=metric_label,
+        )
+        report_name = st.text_input("Report name (optional)")
+
+        if st.button("Create report"):
+            st.session_state.custom_report_error = None
+            st.session_state.custom_report_success = None
+
+            if not selected_dimensions or not selected_metrics:
+                st.session_state.custom_report_error = (
+                    "Select at least one dimension and one metric."
+                )
+            else:
+                try:
+                    response = fetch_ga4_report(
+                        start_date=start_date,
+                        end_date=end_date,
+                        metrics=selected_metrics,
+                        dimensions=selected_dimensions,
+                    )
+                    report_df = ga4_to_dataframe(response)
+
+                    report_id = f"user_{len(st.session_state.user_reports) + 1}"
+                    display_name = report_name.strip() if report_name else f"Custom Report {len(st.session_state.user_reports) + 1}"
+                    description = (
+                        f"Dimensions: {', '.join(selected_dimensions)} | "
+                        f"Metrics: {', '.join(selected_metrics)}"
+                    )
+
+                    # User-defined report (Phase 2).
+                    st.session_state.user_reports[report_id] = {
+                        "id": report_id,
+                        "name": display_name,
+                        "description": description,
+                        "data": report_df,
+                    }
+                    st.session_state.custom_report_success = "Custom report created."
+                    st.rerun()
+                except Exception:
+                    st.session_state.custom_report_error = (
+                        "The selected metrics and dimensions are not compatible. "
+                        "Please try a different combination."
+                    )
+
+        if st.session_state.custom_report_error:
+            st.error(st.session_state.custom_report_error)
+        if st.session_state.custom_report_success:
+            st.success(st.session_state.custom_report_success)
 
 
 with col_chat:
