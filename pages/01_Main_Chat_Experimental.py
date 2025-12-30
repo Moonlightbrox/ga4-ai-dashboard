@@ -93,7 +93,11 @@ if st.session_state.last_date_key != date_key:
 
 if not st.session_state.reports_loaded:
     with st.spinner("📊 Loading GA4 data..."):
-        st.session_state.reports = get_all_core_reports(start_date, end_date)
+        core_reports = get_all_core_reports(start_date, end_date)
+        st.session_state.reports = {
+            report_id: report_info.get("data")
+            for report_id, report_info in core_reports.items()
+        }
         st.session_state.reports_loaded = True
 
 reports = st.session_state.reports

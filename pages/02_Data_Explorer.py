@@ -70,33 +70,26 @@ if st.button("Load basic reports", type="primary"):
 basic_reports = st.session_state.basic_reports
 
 if st.session_state.basic_reports_loaded:
-    report_options = {
-        "Traffic Overview": "traffic_overview",
-        "Daily Trends": "daily_trends",
-        "Landing Pages": "landing_pages",
-        "Device Performance": "device_performance",
-        "Ecommerce Funnel": "ecommerce_funnel",
-        "Top Products": "top_products",
-        "Geographic Breakdown": "geographic_breakdown",
-        "User Acquisition": "user_acquisition",
-        "Page Performance": "page_performance",
-    }
+    report_items = list(basic_reports.values())
+    report_names = [item["name"] for item in report_items]
+    report_label = st.selectbox("Select a report", report_names)
+    report_info = next((item for item in report_items if item["name"] == report_label), None)
 
-    report_label = st.selectbox("Select a report", list(report_options.keys()))
-    report_key = report_options[report_label]
-    report_df = basic_reports.get(report_key, pd.DataFrame())
-
-    if report_df.empty:
-        st.info("No rows returned for this report.")
+    if not report_info:
+        st.info("Select a report to preview its data.")
     else:
-        st.dataframe(report_df, use_container_width=True)
-        csv_data = report_df.to_csv(index=False)
-        st.download_button(
-            "Download CSV",
-            csv_data,
-            file_name=f"{report_key}_{start_date}_to_{end_date}.csv",
-            mime="text/csv",
-        )
+        report_df = report_info.get("data", pd.DataFrame())
+        if report_df.empty:
+            st.info("No rows returned for this report.")
+        else:
+            st.dataframe(report_df, use_container_width=True)
+            csv_data = report_df.to_csv(index=False)
+            st.download_button(
+                "Download CSV",
+                csv_data,
+                file_name=f"{report_info['id']}_{start_date}_to_{end_date}.csv",
+                mime="text/csv",
+            )
 
 st.markdown("---")
 

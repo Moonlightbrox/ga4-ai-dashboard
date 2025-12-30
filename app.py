@@ -98,8 +98,11 @@ with st.sidebar:
 if not st.session_state.reports_loaded:
     with st.spinner("📊 Fetching comprehensive GA4 data..."):
         try:
-            all_reports = get_all_core_reports(start_date, end_date)
-            st.session_state.all_reports = all_reports
+            core_reports = get_all_core_reports(start_date, end_date)
+            st.session_state.all_reports = {
+                report_id: report_info.get("data")
+                for report_id, report_info in core_reports.items()
+            }
             st.session_state.reports_loaded = True
             st.rerun()
         except Exception as e:

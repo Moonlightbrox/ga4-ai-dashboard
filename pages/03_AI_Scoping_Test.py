@@ -1,8 +1,11 @@
 ﻿import os
 
-import pandas as pd
 import streamlit as st
 import anthropic
+
+from analytics.raw_reports import get_all_core_reports
+from components.date_selector import get_date_range
+from components.format import format_dataframe_numbers
 
 
 st.set_page_config(
@@ -11,39 +14,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-
-REPORT_CATALOG = [
-    {
-        "id": "traffic_source",
-        "name": "Traffic Source Performance",
-        "description": "Sessions, users, and revenue by source and medium",
-    },
-    {
-        "id": "country_performance",
-        "name": "Country Performance",
-        "description": "Users, sessions, and revenue by country",
-    },
-    {
-        "id": "landing_pages",
-        "name": "Landing Pages",
-        "description": "Top landing pages with sessions and engagement",
-    },
-    {
-        "id": "device_performance",
-        "name": "Device Performance",
-        "description": "Performance split by device category and browser",
-    },
-    {
-        "id": "daily_trends",
-        "name": "Daily Trends",
-        "description": "Time series for users, sessions, and revenue",
-    },
-    {
-        "id": "ecommerce_funnel",
-        "name": "Ecommerce Funnel",
-        "description": "Key ecommerce events and conversion funnel steps",
-    },
-]
 
 
 if "chat_messages" not in st.session_state:
@@ -59,13 +29,36 @@ st.divider()
 
 col_chat, col_reports = st.columns([3, 2])
 
+with st.sidebar:
+    st.header("Date range")
+    start_date, end_date = get_date_range()
+
+try:
+    core_reports = get_all_core_reports(start_date, end_date)
+except Exception as exc:
+    core_reports = {}
+    st.sidebar.error(f"Failed to load reports: {exc}")
+
 
 with col_reports:
     st.subheader("\U0001F4CA Reports")
     st.caption("Select reports to include in AI analysis")
 
+    bulk_cols = st.columns(3)
+    select_all = bulk_cols[0].button("Select all reports")
+    select_basic = bulk_cols[1].button("Select basic reports")
+    select_user = bulk_cols[2].button("Select user reports")
+
+    if select_all or select_basic:
+        for report in core_reports.values():
+            st.session_state[f"report_{report['id']}"] = True
+
+    if select_user:
+        # TODO: Implement user-defined reports selection (Phase 3).
+        st.info("User-defined reports are not available yet.")
+
     selected_reports = []
-    for report in REPORT_CATALOG:
+    for report in core_reports.values():
         checked = st.checkbox(
             report["name"],
             help=report["description"],
@@ -78,57 +71,23 @@ with col_reports:
 
     if selected_reports:
         st.markdown("**Report Preview:**")
-        report_previews = {
-            "traffic_source": pd.DataFrame(
-                [
-                    {"source": "google", "users": 1240, "sessions": 1680, "revenue": 15420.50},
-                    {"source": "facebook", "users": 740, "sessions": 910, "revenue": 6420.00},
-                    {"source": "email", "users": 310, "sessions": 420, "revenue": 3890.75},
-                ]
-            ),
-            "country_performance": pd.DataFrame(
-                [
-                    {"country": "United States", "users": 980, "revenue": 11240.10},
-                    {"country": "Canada", "users": 260, "revenue": 2940.00},
-                    {"country": "Germany", "users": 190, "revenue": 1780.50},
-                ]
-            ),
-            "landing_pages": pd.DataFrame(
-                [
-                    {"landing_page": "/home", "sessions": 820, "engagement_rate": "62%"},
-                    {"landing_page": "/pricing", "sessions": 540, "engagement_rate": "58%"},
-                    {"landing_page": "/blog/intro", "sessions": 310, "engagement_rate": "47%"},
-                ]
-            ),
-            "device_performance": pd.DataFrame(
-                [
-                    {"device": "desktop", "users": 860, "sessions": 1120},
-                    {"device": "mobile", "users": 620, "sessions": 790},
-                    {"device": "tablet", "users": 120, "sessions": 150},
-                ]
-            ),
-            "daily_trends": pd.DataFrame(
-                [
-                    {"date": "2024-01-01", "users": 210, "sessions": 280, "revenue": 1240.00},
-                    {"date": "2024-01-02", "users": 240, "sessions": 310, "revenue": 1390.50},
-                    {"date": "2024-01-03", "users": 195, "sessions": 260, "revenue": 980.25},
-                ]
-            ),
-            "ecommerce_funnel": pd.DataFrame(
-                [
-                    {"step": "product view", "events": 1280},
-                    {"step": "add to cart", "events": 410},
-                    {"step": "checkout", "events": 180},
-                ]
-            ),
-        }
-
         preview_tabs = st.tabs([report["name"] for report in selected_reports])
         for tab, report in zip(preview_tabs, selected_reports):
             with tab:
-                # TODO: Replace mock data with real report data (Phase 2).
-                preview_df = report_previews.get(report["id"], pd.DataFrame())
-                st.dataframe(preview_df, use_container_width=True)
+                # Data sourced from analytics/raw_reports.py (single source of truth).
+                try:
+                    preview_df = report.get("data")
+                    if preview_df is None:
+                        st.info("No data available for this report.")
+                    elif getattr(preview_df, "empty", False):
+                        st.info("No rows returned for this report.")
+                    else:
+                        # UI-only formatting for AI Scoping Test page.
+                        # Raw report data remains unchanged.
+                        formatted_df = format_dataframe_numbers(preview_df)
+                        st.dataframe(formatted_df, use_container_width=True)
+                except Exception as exc:
+                    st.warning(f"Unable to load this report: {exc}")
     else:
         st.info("Select a report to preview its data.")
 
@@ -225,6 +184,10 @@ with col_chat:
                         "role": "assistant",
                         "content": response_text,
                     })
+
+
+
+
 
 
 

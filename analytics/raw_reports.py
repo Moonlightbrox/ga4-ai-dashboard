@@ -545,10 +545,69 @@ def get_page_performance(
 # MASTER FUNCTION: FETCH ALL CORE REPORTS
 # =====================================================================
 
+# Core report registry: UI should consume this as the single source of truth.
+CORE_REPORTS = [
+    {
+        "id": "traffic_overview",
+        "name": "Traffic Overview",
+        "description": "Sessions, users, and revenue by source, medium, device, and country.",
+        "fn": get_traffic_overview,
+    },
+    {
+        "id": "daily_trends",
+        "name": "Daily Trends",
+        "description": "Time series for users, sessions, engagement, and revenue.",
+        "fn": get_daily_trends,
+    },
+    {
+        "id": "landing_pages",
+        "name": "Landing Pages",
+        "description": "Landing page sessions, engagement, and revenue.",
+        "fn": get_landing_pages,
+    },
+    {
+        "id": "device_performance",
+        "name": "Device Performance",
+        "description": "Performance split by device, OS, and browser.",
+        "fn": get_device_performance,
+    },
+    {
+        "id": "ecommerce_funnel",
+        "name": "Ecommerce Funnel",
+        "description": "Funnel steps from views to purchases by date.",
+        "fn": get_ecommerce_funnel,
+    },
+    {
+        "id": "top_products",
+        "name": "Top Products",
+        "description": "Item performance for views, carts, checkouts, and revenue.",
+        "fn": get_top_products,
+    },
+    {
+        "id": "geographic_breakdown",
+        "name": "Geographic Breakdown",
+        "description": "Users, sessions, and revenue by country and city.",
+        "fn": get_geographic_breakdown,
+    },
+    {
+        "id": "user_acquisition",
+        "name": "User Acquisition",
+        "description": "Users, sessions, and revenue by source and medium.",
+        "fn": get_user_acquisition,
+    },
+    {
+        "id": "page_performance",
+        "name": "Page Performance",
+        "description": "Page views, sessions, and engagement by page path and title.",
+        "fn": get_page_performance,
+    },
+]
+
+
 def get_all_core_reports(
     start_date: str,
     end_date: str,
-) -> dict[str, pd.DataFrame]:
+) -> dict[str, dict]:
     """
     Fetch all core reports at once.
     
@@ -557,91 +616,58 @@ def get_all_core_reports(
     Returns:
     --------
     dict with keys:
-        - traffic_overview: Source/medium/device/country breakdown
-        - daily_trends: Time series data
-        - landing_pages: Landing page performance
-        - device_performance: Device/OS/browser breakdown
-        - ecommerce_funnel: Conversion funnel (event-based)
-        - top_products: Product performance (item-scoped only)
-        - geographic_breakdown: Country/city analysis
-        - user_acquisition: Marketing channel effectiveness
-        - page_performance: All pages performance
+        - id: Unique report ID
+        - name: Display name
+        - description: Human-readable description
+        - data: pandas DataFrame
     """
     
-    reports = {}
+    registry = {}
+
+    for report in CORE_REPORTS:
+        report_id = report["id"]
+        try:
+            data = report["fn"](start_date, end_date)
+        except Exception as e:
+            print(f"Warning: {report_id} failed - {e}")
+            data = pd.DataFrame()
+
+        registry[report_id] = {
+            "id": report_id,
+            "name": report["name"],
+            "description": report["description"],
+            "data": data,
+        }
     
-    # Fetch each report with error handling
-    try:
-        reports["traffic_overview"] = get_traffic_overview(start_date, end_date)
-    except Exception as e:
-        print(f"Warning: traffic_overview failed - {e}")
-        reports["traffic_overview"] = pd.DataFrame()
-    
-    try:
-        reports["daily_trends"] = get_daily_trends(start_date, end_date)
-    except Exception as e:
-        print(f"Warning: daily_trends failed - {e}")
-        reports["daily_trends"] = pd.DataFrame()
-    
-    try:
-        reports["landing_pages"] = get_landing_pages(start_date, end_date)
-    except Exception as e:
-        print(f"Warning: landing_pages failed - {e}")
-        reports["landing_pages"] = pd.DataFrame()
-    
-    try:
-        reports["device_performance"] = get_device_performance(start_date, end_date)
-    except Exception as e:
-        print(f"Warning: device_performance failed - {e}")
-        reports["device_performance"] = pd.DataFrame()
-    
-    try:
-        reports["ecommerce_funnel"] = get_ecommerce_funnel(start_date, end_date)
-    except Exception as e:
-        print(f"Warning: ecommerce_funnel failed - {e}")
-        reports["ecommerce_funnel"] = pd.DataFrame()
-    
-    try:
-        reports["top_products"] = get_top_products(start_date, end_date)
-    except Exception as e:
-        print(f"Warning: top_products failed - {e}")
-        reports["top_products"] = pd.DataFrame()
-    
-    try:
-        reports["geographic_breakdown"] = get_geographic_breakdown(start_date, end_date)
-    except Exception as e:
-        print(f"Warning: geographic_breakdown failed - {e}")
-        reports["geographic_breakdown"] = pd.DataFrame()
-    
-    try:
-        reports["user_acquisition"] = get_user_acquisition(start_date, end_date)
-    except Exception as e:
-        print(f"Warning: user_acquisition failed - {e}")
-        reports["user_acquisition"] = pd.DataFrame()
-    
-    try:
-        reports["page_performance"] = get_page_performance(start_date, end_date)
-    except Exception as e:
-        print(f"Warning: page_performance failed - {e}")
-        reports["page_performance"] = pd.DataFrame()
-    
-    return reports
+    return registry
 
 
 # =====================================================================
 # HELPER: GET SUMMARY STATS
 # =====================================================================
 
-def get_summary_statistics(reports: dict[str, pd.DataFrame]) -> dict:
+def _extract_report_frames(reports: dict) -> dict[str, pd.DataFrame]:
+    if not reports:
+        return {}
+
+    sample = next(iter(reports.values()))
+    if isinstance(sample, dict) and "data" in sample:
+        return {key: value.get("data", pd.DataFrame()) for key, value in reports.items()}
+
+    return reports
+
+
+def get_summary_statistics(reports: dict) -> dict:
     """
     Calculate summary statistics across all reports.
     """
-    
-    traffic = reports.get("traffic_overview", pd.DataFrame())
+
+    report_frames = _extract_report_frames(reports)
+    traffic = report_frames.get("traffic_overview", pd.DataFrame())
     
     if traffic.empty:
         # Try daily trends as fallback
-        traffic = reports.get("daily_trends", pd.DataFrame())
+        traffic = report_frames.get("daily_trends", pd.DataFrame())
     
     if traffic.empty:
         return {
