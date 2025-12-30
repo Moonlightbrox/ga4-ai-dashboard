@@ -1,8 +1,7 @@
-﻿import os
-
+﻿
 import streamlit as st
-import anthropic
 
+from ai.cloud import analyze_selected_reports
 from analytics.raw_reports import get_all_core_reports
 from components.date_selector import get_date_range
 from components.format import format_dataframe_numbers
@@ -21,9 +20,6 @@ st.set_page_config(
 
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
-
-if "last_prompt" not in st.session_state:
-    st.session_state.last_prompt = None
 
 if "user_reports" not in st.session_state:
     st.session_state.user_reports = {}
@@ -61,6 +57,19 @@ with col_reports:
     select_basic = bulk_cols[1].button("Select basic reports")
     select_user = bulk_cols[2].button("Select user reports")
 
+    user_group_options = ["All user reports"]
+    if st.session_state.user_reports:
+        user_group_options.extend(sorted({
+            report.get("group")
+            for report in st.session_state.user_reports.values()
+            if report.get("group")
+        }))
+    selected_user_group = st.selectbox(
+        "User report group",
+        options=user_group_options,
+        key="user_report_group",
+    )
+
     if select_all:
         for report in combined_reports.values():
             st.session_state[f"report_{report['id']}"] = True
@@ -72,14 +81,18 @@ with col_reports:
             st.session_state[f"report_{report['id']}"] = True
 
     if select_user:
-        # TODO: Implement user-defined report groups (Phase 3).
         for report in combined_reports.values():
             st.session_state[f"report_{report['id']}"] = False
         if not st.session_state.user_reports:
             st.info("No user reports available yet.")
         else:
+            matched_group = False
             for report in st.session_state.user_reports.values():
-                st.session_state[f"report_{report['id']}"] = True
+                if selected_user_group == "All user reports" or report.get("group") == selected_user_group:
+                    st.session_state[f"report_{report['id']}"] = True
+                    matched_group = True
+            if selected_user_group != "All user reports" and not matched_group:
+                st.info("No reports found in that group.")
 
     selected_reports = []
     ordered_reports = list(core_reports.values()) + list(st.session_state.user_reports.values())
@@ -159,6 +172,7 @@ with col_reports:
             format_func=metric_label,
         )
         report_name = st.text_input("Report name (optional)")
+        report_group = st.text_input("Report group (optional)")
 
         if st.button("Create report"):
             st.session_state.custom_report_error = None
@@ -180,6 +194,7 @@ with col_reports:
 
                     report_id = f"user_{len(st.session_state.user_reports) + 1}"
                     display_name = report_name.strip() if report_name else f"Custom Report {len(st.session_state.user_reports) + 1}"
+                    group_name = report_group.strip() if report_group else None
                     description = (
                         f"Dimensions: {', '.join(selected_dimensions)} | "
                         f"Metrics: {', '.join(selected_metrics)}"
@@ -190,6 +205,7 @@ with col_reports:
                         "id": report_id,
                         "name": display_name,
                         "description": description,
+                        "group": group_name,
                         "data": report_df,
                     }
                     st.session_state.custom_report_success = "Custom report created."
@@ -211,16 +227,25 @@ with col_chat:
     st.caption("Ask questions about the selected reports")
 
     template_questions = [
-        "What are the main performance highlights?",
-        "Why did revenue change recently?",
-        "Which channel is performing best?",
+        {
+            "label": "Traffic Analysis",
+            "prompt_key": "traffic_quality_assessment",
+        },
+        {
+            "label": "Conversion Funnel Leakage",
+            "prompt_key": "conversion_funnel_leakage",
+        },
+        {
+            "label": "Landing Page Optimization",
+            "prompt_key": "landing_page_optimization",
+        },
     ]
 
     template_cols = st.columns(len(template_questions))
     clicked_template = None
     for idx, question in enumerate(template_questions):
         with template_cols[idx]:
-            if st.button(question, key=f"template_{idx}"):
+            if st.button(question["label"], key=f"template_{idx}"):
                 clicked_template = question
 
     for message in st.session_state.chat_messages:
@@ -233,11 +258,12 @@ with col_chat:
     with clear_col:
         if st.button("\U0001F5D1", help="Clear chat"):
             st.session_state.chat_messages = []
-            st.session_state.last_prompt = None
             st.rerun()
 
+    prompt_key = None
     if clicked_template:
-        user_input = clicked_template
+        user_input = clicked_template["label"]
+        prompt_key = clicked_template["prompt_key"]
 
     if user_input:
         if not selected_reports:
@@ -248,48 +274,22 @@ with col_chat:
                 "content": user_input,
             })
 
-            selected_lines = [
-                f"- {report['name']}: {report['description']}"
-                for report in selected_reports
-            ]
-            prompt = (
-                "You are an analytics assistant. You can only use the following reports:\n"
-                f"{chr(10).join(selected_lines)}\n\n"
-                f"User question:\n\"{user_input}\"\n\n"
-                "Rules:\n"
-                "- Only use selected reports.\n"
-                "- If the question needs data that is not covered, respond exactly: "
-                "\"This question requires a report that is not currently included.\"\n"
-                "- Keep the response concise and actionable."
-            )
-            st.session_state.last_prompt = prompt
-
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
-                    api_key = os.getenv("ANTHROPIC_API_KEY")
-                    if not api_key:
-                        response_text = (
-                            "AI is not configured. Set ANTHROPIC_API_KEY to enable responses.\n\n"
-                            "Prompt preview:\n"
-                            f"{prompt}"
-                        )
-                    else:
-                        client = anthropic.Anthropic(api_key=api_key)
-                        message = client.messages.create(
-                            model="claude-sonnet-4-20250514",
-                            max_tokens=800,
-                            messages=[{
-                                "role": "user",
-                                "content": prompt,
-                            }],
-                        )
-                        response_text = message.content[0].text
+                    response_text = analyze_selected_reports(
+                        selected_reports=selected_reports,
+                        user_question=user_input,
+                        prompt_key=prompt_key,
+                    )
 
                     st.write(response_text)
                     st.session_state.chat_messages.append({
                         "role": "assistant",
                         "content": response_text,
                     })
+
+
+
 
 
 
