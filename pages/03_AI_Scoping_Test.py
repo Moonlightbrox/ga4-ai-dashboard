@@ -1,10 +1,10 @@
 ﻿
 import streamlit as st
 
-from ai.cloud import analyze_selected_reports
+from ai.cloud import analyze_selected_reports, get_estimated_tokens
 from analytics.raw_reports import get_all_core_reports
 from components.date_selector import get_date_range
-from components.format import format_dataframe_numbers
+from components.format import format_dataframe_numbers, format_token_estimate
 from data.ga4_schema import CORE_REPORT_DIMENSIONS, CORE_REPORT_METRICS
 from data.ga4_service import fetch_ga4_report
 from data.preprocess import ga4_to_dataframe
@@ -30,21 +30,101 @@ if "custom_report_error" not in st.session_state:
 if "custom_report_success" not in st.session_state:
     st.session_state.custom_report_success = None
 
+if "core_reports_cache" not in st.session_state:
+    st.session_state.core_reports_cache = {}
+
+if "core_reports_date_key" not in st.session_state:
+    st.session_state.core_reports_date_key = None
+
+if "reload_core_reports" not in st.session_state:
+    st.session_state.reload_core_reports = False
+
 st.title("AI Scoping Test")
 st.caption("Prototype page for AI logic, report scoping, and user flow")
 st.divider()
+
+AI_BUTTON_REPORTS = {
+    "traffic_quality_assessment": [
+        "traffic_overview",
+        "daily_trends",
+        "device_performance",
+    ],
+    "conversion_funnel_leakage": [
+        "ecommerce_funnel",
+        "top_products",
+    ],
+    "landing_page_optimization": [
+        "landing_pages",
+        "device_performance",
+    ],
+}
+
+def get_reports_for_ids(report_map: dict, report_ids: list[str]) -> list[dict]:
+    selected = []
+    for report_id in report_ids:
+        report = report_map.get(report_id)
+        if not report:
+            continue
+        selected.append(report)
+    return selected
+
+
+@st.cache_data(show_spinner=False)
+def load_core_reports_cached(start_date: str, end_date: str) -> dict[str, dict]:
+    return get_all_core_reports(start_date, end_date)
+
+
+@st.cache_data(show_spinner=False)
+def load_custom_report_cached(
+    start_date: str,
+    end_date: str,
+    metrics: tuple[str, ...],
+    dimensions: tuple[str, ...],
+):
+    response = fetch_ga4_report(
+        start_date=start_date,
+        end_date=end_date,
+        metrics=list(metrics),
+        dimensions=list(dimensions),
+    )
+    return ga4_to_dataframe(response)
+
 
 col_chat, col_reports = st.columns([3, 2])
 
 with st.sidebar:
     st.header("Date range")
     start_date, end_date = get_date_range()
+    if st.button("Refresh data"):
+        st.session_state.reload_core_reports = True
+    st.divider()
+    st.subheader("AI Data Coverage")
+    coverage_options = list(range(10, 101, 10))
+    selected_coverage = st.selectbox(
+        "AI Data Coverage",
+        options=coverage_options,
+        index=8,
+        key="ai_data_coverage",
+        format_func=lambda value: f"{value}%",
+        label_visibility="collapsed",
+    )
 
-try:
-    core_reports = get_all_core_reports(start_date, end_date)
-except Exception as exc:
-    core_reports = {}
-    st.sidebar.error(f"Failed to load reports: {exc}")
+date_key = f"{start_date}_{end_date}"
+if st.session_state.core_reports_date_key != date_key:
+    st.session_state.reload_core_reports = True
+
+core_reports = st.session_state.core_reports_cache
+if st.session_state.reload_core_reports or not core_reports:
+    try:
+        # Cache reports by date to avoid redundant GA4 fetches on UI-only reruns.
+        core_reports = load_core_reports_cached(start_date, end_date)
+        st.session_state.core_reports_cache = core_reports
+        st.session_state.core_reports_date_key = date_key
+        st.session_state.reload_core_reports = False
+    except Exception as exc:
+        core_reports = {}
+        st.session_state.core_reports_cache = {}
+        st.sidebar.error(f"Failed to load reports: {exc}")
 
 combined_reports = {**core_reports, **st.session_state.user_reports}
 
@@ -184,13 +264,13 @@ with col_reports:
                 )
             else:
                 try:
-                    response = fetch_ga4_report(
+                    # Cache custom report fetches by date, metrics, and dimensions.
+                    report_df = load_custom_report_cached(
                         start_date=start_date,
                         end_date=end_date,
-                        metrics=selected_metrics,
-                        dimensions=selected_dimensions,
+                        metrics=tuple(selected_metrics),
+                        dimensions=tuple(selected_dimensions),
                     )
-                    report_df = ga4_to_dataframe(response)
 
                     report_id = f"user_{len(st.session_state.user_reports) + 1}"
                     display_name = report_name.strip() if report_name else f"Custom Report {len(st.session_state.user_reports) + 1}"
@@ -245,30 +325,55 @@ with col_chat:
     clicked_template = None
     for idx, question in enumerate(template_questions):
         with template_cols[idx]:
-            if st.button(question["label"], key=f"template_{idx}"):
+            required_report_ids = AI_BUTTON_REPORTS.get(question["prompt_key"], [])
+            required_reports = get_reports_for_ids(combined_reports, required_report_ids)
+            estimated_tokens = get_estimated_tokens(
+                selected_reports=required_reports,
+                user_question=question["label"],
+                prompt_key=question["prompt_key"],
+            )
+            display_tokens = int(estimated_tokens * (selected_coverage / 100))
+            button_label = f"{question['label']}  {format_token_estimate(display_tokens)}"
+            if st.button(button_label, key=f"template_{idx}"):
                 clicked_template = question
 
     for message in st.session_state.chat_messages:
         with st.chat_message(message["role"]):
             st.write(message["content"])
 
-    input_col, clear_col = st.columns([6, 1])
+    input_col, cost_col, clear_col = st.columns([6, 1, 1])
     with input_col:
-        user_input = st.chat_input("Ask a question about your data")
+        user_input = st.chat_input("Ask a question about your data", key="scoping_chat_prompt")
+    chat_prompt_preview = st.session_state.get("scoping_chat_prompt", "")
+    chat_estimated_tokens = get_estimated_tokens(
+        selected_reports=selected_reports,
+        user_question=chat_prompt_preview,
+        prompt_key=None,
+    )
+    chat_display_tokens = int(chat_estimated_tokens * (selected_coverage / 100))
+    with cost_col:
+        st.markdown(
+            f"<div style='text-align: right;'>{format_token_estimate(chat_display_tokens)}</div>",
+            unsafe_allow_html=True,
+        )
     with clear_col:
         if st.button("\U0001F5D1", help="Clear chat"):
             st.session_state.chat_messages = []
             st.rerun()
 
     prompt_key = None
+    required_reports = []
     if clicked_template:
         user_input = clicked_template["label"]
         prompt_key = clicked_template["prompt_key"]
+        required_report_ids = AI_BUTTON_REPORTS.get(prompt_key, [])
+        required_reports = get_reports_for_ids(combined_reports, required_report_ids)
 
     if user_input:
-        if not selected_reports:
+        if not prompt_key and not selected_reports:
             st.warning("Please select at least one report to continue.")
         else:
+            report_payload = required_reports if prompt_key else selected_reports
             st.session_state.chat_messages.append({
                 "role": "user",
                 "content": user_input,
@@ -277,7 +382,7 @@ with col_chat:
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     response_text = analyze_selected_reports(
-                        selected_reports=selected_reports,
+                        selected_reports=report_payload,
                         user_question=user_input,
                         prompt_key=prompt_key,
                     )

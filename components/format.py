@@ -46,3 +46,30 @@ def format_dataframe_numbers(df, decimals=0):
 
     formatted[numeric_cols] = rounded
     return formatted
+
+
+def format_token_number(tokens: int) -> str:
+    if tokens >= 1000:
+        return f"~{int(round(tokens / 1000))}k"
+    return f"~{tokens}"
+
+
+def token_status(tokens: int) -> str:
+    if tokens < 20000:
+        return "green"
+    if tokens <= 60000:
+        return "yellow"
+    return "red"
+
+
+def token_emoji(tokens: int) -> str:
+    status = token_status(tokens)
+    if status == "green":
+        return "\U0001F7E2"
+    if status == "yellow":
+        return "\U0001F7E1"
+    return "\U0001F534"
+
+
+def format_token_estimate(tokens: int) -> str:
+    return f"{token_emoji(tokens)} {format_token_number(tokens)}"
