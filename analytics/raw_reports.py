@@ -1,40 +1,28 @@
-"""
-analytics/raw_reports.py
-=====================================================================
-Production-ready GA4 reports - COMPATIBILITY TESTED
-=====================================================================
-
-All dimension/metric combinations tested against GA4 compatibility rules.
-
-IMPORTANT GA4 RULES:
-- Can't mix session-scoped with item-scoped dimensions
-- Can't mix user-scoped with item-scoped dimensions
-- Event metrics work with most dimensions
-- Item metrics ONLY work with item dimensions
-- averageSessionDuration is incompatible with most dimensions
-"""
+# This module defines the core GA4 reports and returns them as standardized tables.
+# It also provides a registry and helpers so the UI can fetch consistent report data.
 
 import pandas as pd
 from data.ga4_service import fetch_ga4_report
 from data.preprocess import ga4_to_dataframe
 
 
-# =====================================================================
-# REPORT 1: TRAFFIC OVERVIEW
-# Scope: Session + User metrics with session/user dimensions
-# =====================================================================
+# ============================================================================
+# Core Report Builders
+# ============================================================================
+# Each function below calls GA4, normalizes columns, and returns a DataFrame.
 
+# This report summarizes traffic by source, medium, device, and country.
 def get_traffic_overview(
-    start_date: str,
-    end_date: str,
+    start_date: str,                                                          # GA4 start date for the report
+    end_date: str,                                                            # GA4 end date for the report
 ) -> pd.DataFrame:
     """
     Traffic by source, medium, device, and country.
-    
-    COMPATIBLE: Session dimensions + Session/User metrics
+
+    Compatible: session dimensions with session/user metrics.
     """
-    
-    expected_columns = [
+
+    expected_columns = [                                                      # Expected schema for consistent UI use
         "country",
         "deviceCategory",
         "sessionSource",
@@ -48,11 +36,11 @@ def get_traffic_overview(
         "transactions",
         "purchaseRevenue",
     ]
-    
+
     try:
         response = fetch_ga4_report(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date,                                            # Date range start
+            end_date=end_date,                                                # Date range end
             metrics=[
                 "totalUsers",
                 "activeUsers",
@@ -70,37 +58,33 @@ def get_traffic_overview(
                 "sessionMedium",
             ],
         )
-    except Exception as e:
-        return pd.DataFrame(columns=expected_columns)
-    
-    df = ga4_to_dataframe(response)
-    
+    except Exception as e:                                                    # Handle GA4 API errors to keep UI stable
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
+    df = ga4_to_dataframe(response)                                           # Convert GA4 response to DataFrame
+
     if df.empty:
-        return pd.DataFrame(columns=expected_columns)
-    
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
     for col in expected_columns:
         if col not in df.columns:
-            df[col] = 0
-    
-    return df[expected_columns]
+            df[col] = 0                                                       # Fill missing columns to keep schema stable
+
+    return df[expected_columns]                                               # Return ordered, consistent columns
 
 
-# =====================================================================
-# REPORT 2: DAILY TRENDS
-# Scope: Date dimension with session/user metrics
-# =====================================================================
-
+# This report provides daily trend metrics for key KPIs.
 def get_daily_trends(
-    start_date: str,
-    end_date: str,
+    start_date: str,                                                          # GA4 start date for the report
+    end_date: str,                                                            # GA4 end date for the report
 ) -> pd.DataFrame:
     """
     Daily metrics to identify trends.
-    
-    COMPATIBLE: Date dimension works with most metrics
+
+    Compatible: date dimension with most metrics.
     """
-    
-    expected_columns = [
+
+    expected_columns = [                                                      # Expected schema for consistent UI use
         "date",
         "totalUsers",
         "newUsers",
@@ -111,11 +95,11 @@ def get_daily_trends(
         "purchaseRevenue",
         "screenPageViews",
     ]
-    
+
     try:
         response = fetch_ga4_report(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date,                                            # Date range start
+            end_date=end_date,                                                # Date range end
             metrics=[
                 "totalUsers",
                 "newUsers",
@@ -128,37 +112,33 @@ def get_daily_trends(
             ],
             dimensions=["date"],
         )
-    except Exception as e:
-        return pd.DataFrame(columns=expected_columns)
-    
-    df = ga4_to_dataframe(response)
-    
+    except Exception as e:                                                    # Handle GA4 API errors to keep UI stable
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
+    df = ga4_to_dataframe(response)                                           # Convert GA4 response to DataFrame
+
     if df.empty:
-        return pd.DataFrame(columns=expected_columns)
-    
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
     for col in expected_columns:
         if col not in df.columns:
-            df[col] = 0
-    
-    return df[expected_columns]
+            df[col] = 0                                                       # Fill missing columns to keep schema stable
+
+    return df[expected_columns]                                               # Return ordered, consistent columns
 
 
-# =====================================================================
-# REPORT 3: LANDING PAGES PERFORMANCE
-# Scope: Page dimensions with session metrics
-# =====================================================================
-
+# This report tracks landing page performance metrics.
 def get_landing_pages(
-    start_date: str,
-    end_date: str,
+    start_date: str,                                                          # GA4 start date for the report
+    end_date: str,                                                            # GA4 end date for the report
 ) -> pd.DataFrame:
     """
     Performance by landing page.
-    
-    COMPATIBLE: Landing page with session metrics
+
+    Compatible: landing page dimension with session metrics.
     """
-    
-    expected_columns = [
+
+    expected_columns = [                                                      # Expected schema for consistent UI use
         "landingPage",
         "sessions",
         "engagedSessions",
@@ -167,11 +147,11 @@ def get_landing_pages(
         "purchaseRevenue",
         "totalUsers",
     ]
-    
+
     try:
         response = fetch_ga4_report(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date,                                            # Date range start
+            end_date=end_date,                                                # Date range end
             metrics=[
                 "sessions",
                 "engagedSessions",
@@ -182,37 +162,33 @@ def get_landing_pages(
             ],
             dimensions=["landingPage"],
         )
-    except Exception as e:
-        return pd.DataFrame(columns=expected_columns)
-    
-    df = ga4_to_dataframe(response)
-    
+    except Exception as e:                                                    # Handle GA4 API errors to keep UI stable
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
+    df = ga4_to_dataframe(response)                                           # Convert GA4 response to DataFrame
+
     if df.empty:
-        return pd.DataFrame(columns=expected_columns)
-    
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
     for col in expected_columns:
         if col not in df.columns:
-            df[col] = 0
-    
-    return df[expected_columns]
+            df[col] = 0                                                       # Fill missing columns to keep schema stable
+
+    return df[expected_columns]                                               # Return ordered, consistent columns
 
 
-# =====================================================================
-# REPORT 4: DEVICE & BROWSER BREAKDOWN
-# Scope: Device/tech dimensions with user/session metrics
-# =====================================================================
-
+# This report breaks down performance by device, OS, and browser.
 def get_device_performance(
-    start_date: str,
-    end_date: str,
+    start_date: str,                                                          # GA4 start date for the report
+    end_date: str,                                                            # GA4 end date for the report
 ) -> pd.DataFrame:
     """
     Performance by device, OS, and browser.
-    
-    COMPATIBLE: Device dimensions with user/session metrics
+
+    Compatible: device dimensions with user/session metrics.
     """
-    
-    expected_columns = [
+
+    expected_columns = [                                                      # Expected schema for consistent UI use
         "deviceCategory",
         "operatingSystem",
         "browser",
@@ -223,11 +199,11 @@ def get_device_performance(
         "transactions",
         "purchaseRevenue",
     ]
-    
+
     try:
         response = fetch_ga4_report(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date,                                            # Date range start
+            end_date=end_date,                                                # Date range end
             metrics=[
                 "totalUsers",
                 "sessions",
@@ -242,38 +218,33 @@ def get_device_performance(
                 "browser",
             ],
         )
-    except Exception as e:
-        return pd.DataFrame(columns=expected_columns)
-    
-    df = ga4_to_dataframe(response)
-    
+    except Exception as e:                                                    # Handle GA4 API errors to keep UI stable
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
+    df = ga4_to_dataframe(response)                                           # Convert GA4 response to DataFrame
+
     if df.empty:
-        return pd.DataFrame(columns=expected_columns)
-    
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
     for col in expected_columns:
         if col not in df.columns:
-            df[col] = 0
-    
-    return df[expected_columns]
+            df[col] = 0                                                       # Fill missing columns to keep schema stable
+
+    return df[expected_columns]                                               # Return ordered, consistent columns
 
 
-# =====================================================================
-# REPORT 5: ECOMMERCE FUNNEL
-# Scope: Date with event counts - COMPATIBLE
-# =====================================================================
-
+# This report shows the ecommerce funnel steps by date.
 def get_ecommerce_funnel(
-    start_date: str,
-    end_date: str,
+    start_date: str,                                                          # GA4 start date for the report
+    end_date: str,                                                            # GA4 end date for the report
 ) -> pd.DataFrame:
     """
     Ecommerce funnel metrics by date.
-    
-    COMPATIBLE: Date with event metrics (not item metrics)
-    NOTE: Using event counts, not item counts to avoid compatibility issues
+
+    Compatible: date dimension with event metrics.
     """
-    
-    expected_columns = [
+
+    expected_columns = [                                                      # Expected schema for consistent UI use
         "date",
         "screenPageViews",
         "itemViewEvents",
@@ -282,11 +253,11 @@ def get_ecommerce_funnel(
         "transactions",
         "purchaseRevenue",
     ]
-    
+
     try:
         response = fetch_ga4_report(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date,                                            # Date range start
+            end_date=end_date,                                                # Date range end
             metrics=[
                 "screenPageViews",
                 "itemViewEvents",
@@ -297,38 +268,33 @@ def get_ecommerce_funnel(
             ],
             dimensions=["date"],
         )
-    except Exception as e:
-        return pd.DataFrame(columns=expected_columns)
-    
-    df = ga4_to_dataframe(response)
-    
+    except Exception as e:                                                    # Handle GA4 API errors to keep UI stable
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
+    df = ga4_to_dataframe(response)                                           # Convert GA4 response to DataFrame
+
     if df.empty:
-        return pd.DataFrame(columns=expected_columns)
-    
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
     for col in expected_columns:
         if col not in df.columns:
-            df[col] = 0
-    
-    return df[expected_columns]
+            df[col] = 0                                                       # Fill missing columns to keep schema stable
+
+    return df[expected_columns]                                               # Return ordered, consistent columns
 
 
-# =====================================================================
-# REPORT 6: TOP PRODUCTS/ITEMS
-# Scope: ITEM-SCOPED ONLY - Can't mix with session dimensions
-# =====================================================================
-
+# This report summarizes item-level product performance.
 def get_top_products(
-    start_date: str,
-    end_date: str,
+    start_date: str,                                                          # GA4 start date for the report
+    end_date: str,                                                            # GA4 end date for the report
 ) -> pd.DataFrame:
     """
     Product/item performance metrics.
-    
-    COMPATIBLE: Item dimensions ONLY with item metrics
-    WARNING: Can't mix item dimensions with session/user dimensions
+
+    Compatible: item dimensions with item metrics.
     """
-    
-    expected_columns = [
+
+    expected_columns = [                                                      # Expected schema for consistent UI use
         "itemName",
         "itemCategory",
         "itemsViewed",
@@ -337,11 +303,11 @@ def get_top_products(
         "itemsPurchased",
         "itemRevenue",
     ]
-    
+
     try:
         response = fetch_ga4_report(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date,                                            # Date range start
+            end_date=end_date,                                                # Date range end
             metrics=[
                 "itemsViewed",
                 "itemsAddedToCart",
@@ -354,37 +320,33 @@ def get_top_products(
                 "itemCategory",
             ],
         )
-    except Exception as e:
-        return pd.DataFrame(columns=expected_columns)
-    
-    df = ga4_to_dataframe(response)
-    
+    except Exception as e:                                                    # Handle GA4 API errors to keep UI stable
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
+    df = ga4_to_dataframe(response)                                           # Convert GA4 response to DataFrame
+
     if df.empty:
-        return pd.DataFrame(columns=expected_columns)
-    
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
     for col in expected_columns:
         if col not in df.columns:
-            df[col] = 0
-    
-    return df[expected_columns]
+            df[col] = 0                                                       # Fill missing columns to keep schema stable
+
+    return df[expected_columns]                                               # Return ordered, consistent columns
 
 
-# =====================================================================
-# REPORT 7: GEOGRAPHIC PERFORMANCE
-# Scope: Geographic dimensions with user/session metrics
-# =====================================================================
-
+# This report summarizes performance by geography.
 def get_geographic_breakdown(
-    start_date: str,
-    end_date: str,
+    start_date: str,                                                          # GA4 start date for the report
+    end_date: str,                                                            # GA4 end date for the report
 ) -> pd.DataFrame:
     """
     Performance by country and city.
-    
-    COMPATIBLE: Geographic dimensions with user/session metrics
+
+    Compatible: geographic dimensions with user/session metrics.
     """
-    
-    expected_columns = [
+
+    expected_columns = [                                                      # Expected schema for consistent UI use
         "country",
         "city",
         "totalUsers",
@@ -394,11 +356,11 @@ def get_geographic_breakdown(
         "transactions",
         "purchaseRevenue",
     ]
-    
+
     try:
         response = fetch_ga4_report(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date,                                            # Date range start
+            end_date=end_date,                                                # Date range end
             metrics=[
                 "totalUsers",
                 "newUsers",
@@ -412,37 +374,33 @@ def get_geographic_breakdown(
                 "city",
             ],
         )
-    except Exception as e:
-        return pd.DataFrame(columns=expected_columns)
-    
-    df = ga4_to_dataframe(response)
-    
+    except Exception as e:                                                    # Handle GA4 API errors to keep UI stable
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
+    df = ga4_to_dataframe(response)                                           # Convert GA4 response to DataFrame
+
     if df.empty:
-        return pd.DataFrame(columns=expected_columns)
-    
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
     for col in expected_columns:
         if col not in df.columns:
-            df[col] = 0
-    
-    return df[expected_columns]
+            df[col] = 0                                                       # Fill missing columns to keep schema stable
+
+    return df[expected_columns]                                               # Return ordered, consistent columns
 
 
-# =====================================================================
-# REPORT 8: USER ACQUISITION
-# Scope: Session source/medium with user/session metrics
-# =====================================================================
-
+# This report summarizes acquisition by session source and medium.
 def get_user_acquisition(
-    start_date: str,
-    end_date: str,
+    start_date: str,                                                          # GA4 start date for the report
+    end_date: str,                                                            # GA4 end date for the report
 ) -> pd.DataFrame:
     """
     User acquisition by channel.
-    
-    COMPATIBLE: Session dimensions with user/session metrics
+
+    Compatible: session dimensions with user/session metrics.
     """
-    
-    expected_columns = [
+
+    expected_columns = [                                                      # Expected schema for consistent UI use
         "sessionSource",
         "sessionMedium",
         "totalUsers",
@@ -453,11 +411,11 @@ def get_user_acquisition(
         "transactions",
         "purchaseRevenue",
     ]
-    
+
     try:
         response = fetch_ga4_report(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date,                                            # Date range start
+            end_date=end_date,                                                # Date range end
             metrics=[
                 "totalUsers",
                 "newUsers",
@@ -472,37 +430,33 @@ def get_user_acquisition(
                 "sessionMedium",
             ],
         )
-    except Exception as e:
-        return pd.DataFrame(columns=expected_columns)
-    
-    df = ga4_to_dataframe(response)
-    
+    except Exception as e:                                                    # Handle GA4 API errors to keep UI stable
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
+    df = ga4_to_dataframe(response)                                           # Convert GA4 response to DataFrame
+
     if df.empty:
-        return pd.DataFrame(columns=expected_columns)
-    
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
     for col in expected_columns:
         if col not in df.columns:
-            df[col] = 0
-    
-    return df[expected_columns]
+            df[col] = 0                                                       # Fill missing columns to keep schema stable
+
+    return df[expected_columns]                                               # Return ordered, consistent columns
 
 
-# =====================================================================
-# REPORT 9: PAGE PERFORMANCE
-# Scope: Page path with session metrics
-# =====================================================================
-
+# This report shows page performance by path and title.
 def get_page_performance(
-    start_date: str,
-    end_date: str,
+    start_date: str,                                                          # GA4 start date for the report
+    end_date: str,                                                            # GA4 end date for the report
 ) -> pd.DataFrame:
     """
     Performance by page path.
-    
-    COMPATIBLE: Page dimensions with session/event metrics
+
+    Compatible: page dimensions with session/event metrics.
     """
-    
-    expected_columns = [
+
+    expected_columns = [                                                      # Expected schema for consistent UI use
         "pagePath",
         "pageTitle",
         "screenPageViews",
@@ -510,11 +464,11 @@ def get_page_performance(
         "engagedSessions",
         "userEngagementDuration",
     ]
-    
+
     try:
         response = fetch_ga4_report(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date,                                            # Date range start
+            end_date=end_date,                                                # Date range end
             metrics=[
                 "screenPageViews",
                 "sessions",
@@ -526,151 +480,146 @@ def get_page_performance(
                 "pageTitle",
             ],
         )
-    except Exception as e:
-        return pd.DataFrame(columns=expected_columns)
-    
-    df = ga4_to_dataframe(response)
-    
+    except Exception as e:                                                    # Handle GA4 API errors to keep UI stable
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
+    df = ga4_to_dataframe(response)                                           # Convert GA4 response to DataFrame
+
     if df.empty:
-        return pd.DataFrame(columns=expected_columns)
-    
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
     for col in expected_columns:
         if col not in df.columns:
-            df[col] = 0
-    
-    return df[expected_columns]
+            df[col] = 0                                                       # Fill missing columns to keep schema stable
+
+    return df[expected_columns]                                               # Return ordered, consistent columns
 
 
-# =====================================================================
-# MASTER FUNCTION: FETCH ALL CORE REPORTS
-# =====================================================================
+# ============================================================================
+# Core Report Registry
+# ============================================================================
+# The UI consumes this registry as the single source of truth for reports.
 
-# Core report registry: UI should consume this as the single source of truth.
-CORE_REPORTS = [
+CORE_REPORTS = [                                                              # List of report metadata + builder function
     {
         "id": "traffic_overview",
         "name": "Traffic Overview",
         "description": "Sessions, users, and revenue by source, medium, device, and country.",
-        "fn": get_traffic_overview,
+        "fn": get_traffic_overview,                                          # Function that builds this report
     },
     {
         "id": "daily_trends",
         "name": "Daily Trends",
         "description": "Time series for users, sessions, engagement, and revenue.",
-        "fn": get_daily_trends,
+        "fn": get_daily_trends,                                              # Function that builds this report
     },
     {
         "id": "landing_pages",
         "name": "Landing Pages",
         "description": "Landing page sessions, engagement, and revenue.",
-        "fn": get_landing_pages,
+        "fn": get_landing_pages,                                             # Function that builds this report
     },
     {
         "id": "device_performance",
         "name": "Device Performance",
         "description": "Performance split by device, OS, and browser.",
-        "fn": get_device_performance,
+        "fn": get_device_performance,                                        # Function that builds this report
     },
     {
         "id": "ecommerce_funnel",
         "name": "Ecommerce Funnel",
         "description": "Funnel steps from views to purchases by date.",
-        "fn": get_ecommerce_funnel,
+        "fn": get_ecommerce_funnel,                                          # Function that builds this report
     },
     {
         "id": "top_products",
         "name": "Top Products",
         "description": "Item performance for views, carts, checkouts, and revenue.",
-        "fn": get_top_products,
+        "fn": get_top_products,                                              # Function that builds this report
     },
     {
         "id": "geographic_breakdown",
         "name": "Geographic Breakdown",
         "description": "Users, sessions, and revenue by country and city.",
-        "fn": get_geographic_breakdown,
+        "fn": get_geographic_breakdown,                                      # Function that builds this report
     },
     {
         "id": "user_acquisition",
         "name": "User Acquisition",
         "description": "Users, sessions, and revenue by source and medium.",
-        "fn": get_user_acquisition,
+        "fn": get_user_acquisition,                                          # Function that builds this report
     },
     {
         "id": "page_performance",
         "name": "Page Performance",
         "description": "Page views, sessions, and engagement by page path and title.",
-        "fn": get_page_performance,
+        "fn": get_page_performance,                                          # Function that builds this report
     },
 ]
 
 
+# This function fetches all core reports and returns a registry map.
 def get_all_core_reports(
-    start_date: str,
-    end_date: str,
+    start_date: str,                                                          # GA4 start date for the report bundle
+    end_date: str,                                                            # GA4 end date for the report bundle
 ) -> dict[str, dict]:
     """
     Fetch all core reports at once.
-    
-    All reports tested for GA4 dimension/metric compatibility.
-    
-    Returns:
-    --------
-    dict with keys:
-        - id: Unique report ID
-        - name: Display name
-        - description: Human-readable description
-        - data: pandas DataFrame
+
+    Returns a dict where each key is a report id and each value is report data.
     """
-    
-    registry = {}
+
+    registry = {}                                                             # Map of report_id to report payload
 
     for report in CORE_REPORTS:
-        report_id = report["id"]
+        report_id = report["id"]                                               # Unique report identifier
         try:
-            data = report["fn"](start_date, end_date)
-        except Exception as e:
+            data = report["fn"](start_date, end_date)                         # Execute the report builder
+        except Exception as e:                                                # Handle report failures without breaking all reports
             print(f"Warning: {report_id} failed - {e}")
-            data = pd.DataFrame()
+            data = pd.DataFrame()                                             # Return empty data for the failed report
 
         registry[report_id] = {
-            "id": report_id,
-            "name": report["name"],
-            "description": report["description"],
-            "data": data,
+            "id": report_id,                                                 # Stable report id
+            "name": report["name"],                                          # Display name
+            "description": report["description"],                           # UI-friendly description
+            "data": data,                                                    # Report DataFrame
         }
-    
-    return registry
+
+    return registry                                                           # Return the full report registry
 
 
-# =====================================================================
-# HELPER: GET SUMMARY STATS
-# =====================================================================
+# ============================================================================
+# Summary Statistics Helpers
+# ============================================================================
+# These helpers compute quick KPIs across the report bundle.
 
+# This function normalizes report structures into a dict of DataFrames.
 def _extract_report_frames(reports: dict) -> dict[str, pd.DataFrame]:
     if not reports:
-        return {}
+        return {}                                                             # Return empty mapping when no reports exist
 
-    sample = next(iter(reports.values()))
+    sample = next(iter(reports.values()))                                     # Peek at one report to detect structure
     if isinstance(sample, dict) and "data" in sample:
-        return {key: value.get("data", pd.DataFrame()) for key, value in reports.items()}
+        return {key: value.get("data", pd.DataFrame()) for key, value in reports.items()}  # Return only DataFrames
 
-    return reports
+    return reports                                                            # Return input if it is already a DataFrame map
 
 
+# This function computes high-level summary metrics across reports.
 def get_summary_statistics(reports: dict) -> dict:
     """
     Calculate summary statistics across all reports.
     """
 
-    report_frames = _extract_report_frames(reports)
-    traffic = report_frames.get("traffic_overview", pd.DataFrame())
-    
+    report_frames = _extract_report_frames(reports)                           # Normalize input into DataFrames
+    traffic = report_frames.get("traffic_overview", pd.DataFrame())           # Preferred report for top-line metrics
+
     if traffic.empty:
-        # Try daily trends as fallback
-        traffic = report_frames.get("daily_trends", pd.DataFrame())
-    
+        traffic = report_frames.get("daily_trends", pd.DataFrame())           # Fallback to daily trends if needed
+
     if traffic.empty:
-        return {
+        return {                                                              # Return zeros when no data is available
             "total_users": 0,
             "total_sessions": 0,
             "total_revenue": 0.0,
@@ -678,17 +627,17 @@ def get_summary_statistics(reports: dict) -> dict:
             "conversion_rate": 0.0,
             "revenue_per_user": 0.0,
         }
-    
+
     total_users = int(traffic["totalUsers"].sum()) if "totalUsers" in traffic.columns else 0
     total_sessions = int(traffic["sessions"].sum()) if "sessions" in traffic.columns else 0
     total_revenue = float(traffic["purchaseRevenue"].sum()) if "purchaseRevenue" in traffic.columns else 0.0
     total_transactions = int(traffic["transactions"].sum()) if "transactions" in traffic.columns else 0
-    
+
     return {
-        "total_users": total_users,
-        "total_sessions": total_sessions,
-        "total_revenue": total_revenue,
-        "total_transactions": total_transactions,
+        "total_users": total_users,                                          # Total users across the period
+        "total_sessions": total_sessions,                                    # Total sessions across the period
+        "total_revenue": total_revenue,                                      # Total purchase revenue
+        "total_transactions": total_transactions,                            # Total transactions/purchases
         "conversion_rate": (
             float(total_transactions / total_users * 100)
             if total_users > 0 else 0.0
@@ -700,28 +649,29 @@ def get_summary_statistics(reports: dict) -> dict:
     }
 
 
-# =====================================================================
-# GA4 COMPATIBILITY NOTES
-# =====================================================================
+# ============================================================================
+# GA4 Compatibility Notes
+# ============================================================================
+# This section summarizes the dimension/metric compatibility rules used above.
 
 """
 KEY GA4 COMPATIBILITY RULES APPLIED:
 
-1. SESSION-SCOPED DIMENSIONS (✅ Compatible with most metrics):
+1. SESSION-SCOPED DIMENSIONS (compatible with most metrics):
    - sessionSource, sessionMedium
    - deviceCategory, browser, operatingSystem
    - country, city
    - landingPage, pagePath, pageTitle
    - date
-   
-   ✅ Works with: User metrics, session metrics, event metrics, revenue
-   ❌ Does NOT work with: Item-scoped metrics
 
-2. ITEM-SCOPED DIMENSIONS (⚠️ Limited compatibility):
+   Works with: User metrics, session metrics, event metrics, revenue
+   Does NOT work with: Item-scoped metrics
+
+2. ITEM-SCOPED DIMENSIONS (limited compatibility):
    - itemName, itemId, itemCategory, itemBrand
-   
-   ✅ ONLY works with: Item-scoped metrics
-   ❌ Does NOT work with: User metrics, session metrics
+
+   ONLY works with: Item-scoped metrics
+   Does NOT work with: User metrics, session metrics
 
 3. METRICS THAT WORK EVERYWHERE:
    - totalUsers, activeUsers, newUsers
@@ -731,17 +681,17 @@ KEY GA4 COMPATIBILITY RULES APPLIED:
    - screenPageViews, eventCount
 
 4. METRICS WITH RESTRICTIONS:
-   - averageSessionDuration: Doesn't work with most dimensions
+   - averageSessionDuration: doesn't work with most dimensions
    - Item metrics (itemsViewed, etc): ONLY with item dimensions
 
 5. SAFE COMBINATIONS USED:
-   ✅ Session dimensions + User/Session/Revenue metrics
-   ✅ Date + Any metrics
-   ✅ Item dimensions + Item metrics ONLY
-   ✅ Event metrics (addToCarts, checkouts) work with date
+   - Session dimensions + User/Session/Revenue metrics
+   - Date + Any metrics
+   - Item dimensions + Item metrics ONLY
+   - Event metrics (addToCarts, checkouts) work with date
 
 6. AVOIDED COMBINATIONS:
-   ❌ Item dimensions + Session metrics
-   ❌ Session dimensions + Item metrics
-   ❌ averageSessionDuration with multiple dimensions
+   - Item dimensions + Session metrics
+   - Session dimensions + Item metrics
+   - averageSessionDuration with multiple dimensions
 """

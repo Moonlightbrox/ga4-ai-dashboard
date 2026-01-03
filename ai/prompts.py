@@ -1,12 +1,20 @@
-SYSTEM_ROLE_PROMPT = (
+# This module stores the prompt text and labels used by the AI layer.          
+# It keeps system rules and button templates consistent across the app.        
+
+# ============================================================================
+# Core System Prompts and Labels
+# ============================================================================
+# These constants define the system role, labels, and rules for AI responses.
+
+SYSTEM_ROLE_PROMPT = (                                                       # Sets the AI's role and tone
     "SYSTEM ROLE:\n"
     "You are a data-grounded analytics assistant."
 )
 
-REPORT_CONTEXT_LABEL = "REPORT CONTEXT (JSON):"
-USER_QUESTION_LABEL = "USER QUESTION:"
+REPORT_CONTEXT_LABEL = "REPORT CONTEXT (JSON):"                              # Label that introduces report data in prompts
+USER_QUESTION_LABEL = "USER QUESTION:"                                      # Label that introduces the user's question
 
-ANALYSIS_RULES_PROMPT = (
+ANALYSIS_RULES_PROMPT = (                                                    # Guardrails that limit what the AI can claim
     "RULES:\n"
     "You may only use the data provided in the reports.\n"
     "Do not assume missing data.\n"
@@ -16,7 +24,12 @@ ANALYSIS_RULES_PROMPT = (
     "Be concise, factual, and analytical."
 )
 
-BUTTON_PROMPTS = {
+# ============================================================================
+# Button Prompt Templates
+# ============================================================================
+# These templates power prebuilt AI questions in the UI.
+
+BUTTON_PROMPTS = {                                                          # Map of button IDs to detailed prompt text
     "traffic_quality_assessment": (
         "Analyze traffic source performance using engagement metrics (bounce rate, time on site, pages per session) and conversion metrics. Calculate quality score for each source based on multiple factors. Identify: (1) Sources with high volume but poor engagement/conversion (bot risk or poor targeting), (2) Sources with low volume but high quality (scaling opportunity), (3) Anomalous patterns. Output source-level metrics, quality ranking, and estimated wasted spend on low-quality traffic. Data QA: Flag sources with >80% bounce rate AND <10 second avg session (likely bots), sources with 0% conversion but high volume (tracking issue), or sudden traffic spikes >300% without corresponding revenue increase (suspicious traffic). Check for referrer spam patterns. Do NOT: recommend specific ad platforms without cost/CAC data, attribute quality issues to creative without creative performance data, or estimate fraud levels without bot detection data."
     ),

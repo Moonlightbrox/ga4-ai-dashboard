@@ -1,39 +1,16 @@
-""" ga4_schema.py
+# This module defines the canonical GA4 metrics and dimensions used by the app.
+# It also provides UI-friendly labels so users can build custom reports safely.
 
-=====================================================================
-PURPOSE
-=====================================================================
-
-Canonical analytics schema for GA4.
-
-Defines:
-- Atomic GA4 metrics (safe to fetch)
-- GA4 dimensions (row scope)
-- Derived metrics (formulas only)
-
-This file defines WHAT exists and WHAT it means,
-not WHEN or HOW it is calculated.
-"""
-
-
-# =====================================================================
-# GA4 ATOMIC METRICS (SAFE TO FETCH FROM API)
-# =====================================================================
-
-""" GA4_METRICS
-
-Atomic, summable GA4 metrics only.
-
-RULE:
-If a metric is a ratio, rate, average, or per-user,
-it MUST NOT appear here.
-"""
+# ============================================================================
+# GA4 Atomic Metrics (Safe to Fetch)
+# ============================================================================
+# These are raw GA4 metrics that can be requested directly from the API.
 
 GA4_METRICS: set[str] = {
 
-    # --------------------------------------------------
-    # USERS & ACTIVITY
-    # --------------------------------------------------
+    # ------------------------------------------------------------------
+    # Users and Activity
+    # ------------------------------------------------------------------
     "activeUsers",                 # Users with at least one engaged session
     "newUsers",                    # First-time users
     "totalUsers",                  # All users
@@ -42,34 +19,33 @@ GA4_METRICS: set[str] = {
     "active7DayUsers",             # Weekly active users (WAU)
     "active28DayUsers",            # Monthly active users (MAU)
 
-    # --------------------------------------------------
-    # SESSIONS & ENGAGEMENT SIGNALS
-    # --------------------------------------------------
+    # ------------------------------------------------------------------
+    # Sessions and Engagement Signals
+    # ------------------------------------------------------------------
     "sessions",                    # Total sessions
     "engagedSessions",             # Sessions considered engaged
     "eventCount",                  # Total events fired
     "userEngagementDuration",      # Total engagement time (seconds)
-    
-    "screenPageViews",             # The number of app screens or web pages your users viewed. Repeated views of a single page or screen are counted. (screen_view + page_view events).
 
-    # --------------------------------------------------
-    # ECOMMERCE – TRANSACTIONS & VALUE
-    # --------------------------------------------------
-    "transactions",                # The count of Events with purchase revenue.Events are in_app_purchase, ecommerce_purchase, purchase, app_store_subscription_renew, app_store_subscription_convert, and refund.
-    "ecommercePurchases",          # The number of times users completed a purchase. This metric counts purchase events; this metric does not count in_app_purchase and subscription events.
+    "screenPageViews",             # Total page and screen views
+
+    # ------------------------------------------------------------------
+    # Ecommerce Transactions and Value
+    # ------------------------------------------------------------------
+    "transactions",                # Purchase events count
+    "ecommercePurchases",          # Completed ecommerce purchases
     "totalRevenue",                # Total revenue (all sources)
     "purchaseRevenue",             # Revenue from purchases only
     "grossPurchaseRevenue",        # Revenue before refunds/discounts
     "refundAmount",                # Total refunded amount
 
-    # --------------------------------------------------
-    # ECOMMERCE – ITEMS
-    # --------------------------------------------------
-    "itemViewEvents",              # The number of times the item details were viewed. The metric counts the occurrence of the view_item event. 
-    "addToCarts",                  # The number of times users added items to their shopping carts.
-    "checkouts",                   # The number of times users started the checkout process. This metric counts the occurrence of the begin_checkout event.
+    # ------------------------------------------------------------------
+    # Ecommerce Items
+    # ------------------------------------------------------------------
+    "itemViewEvents",              # Item detail view events
+    "addToCarts",                  # Add-to-cart events
+    "checkouts",                   # Begin checkout events
 
-    # Item counts
     "itemsPurchased",              # Number of items sold
     "itemsViewed",                 # Items viewed
     "itemsAddedToCart",            # Items added to cart
@@ -77,84 +53,79 @@ GA4_METRICS: set[str] = {
     "itemsViewedInList",           # Items viewed in product lists
     "itemsClickedInList",          # Items clicked from product lists
 
-    "itemRevenue",                 # Revenue per item
+    "itemRevenue",                 # Revenue attributed to items
     "grossItemRevenue",            # Item revenue before discounts
     "itemDiscountAmount",          # Discount amount applied to items
     "itemRefundAmount",            # Refunded item value
 
-    # --------------------------------------------------
-    # ECOMMERCE – FUNNEL EVENTS
-    # --------------------------------------------------
+    # ------------------------------------------------------------------
+    # Ecommerce Funnel Events
+    # ------------------------------------------------------------------
     "addToCarts",                  # Add-to-cart events
     "checkouts",                   # Checkout-start events
     "itemViewEvents",              # Item view events
     "itemListViewEvents",          # Product list view events
     "itemListClickEvents",         # Product list click events
 
-    # --------------------------------------------------
-    # PROMOTIONS
-    # --------------------------------------------------
+    # ------------------------------------------------------------------
+    # Promotions
+    # ------------------------------------------------------------------
     "promotionViews",              # Promotion impressions
     "promotionClicks",             # Promotion clicks
 
-    # --------------------------------------------------
-    # PURCHASERS
-    # --------------------------------------------------
+    # ------------------------------------------------------------------
+    # Purchasers
+    # ------------------------------------------------------------------
     "firstTimePurchasers",         # Users who purchased for the first time
     "totalPurchasers",             # Users who made at least one purchase
 }
 
 
-# =====================================================================
-# GA4 DIMENSIONS 
-# =====================================================================
-
-""" GA4_DIMENSIONS
-
-Dimensions define HOW metrics are segmented.
-They define row scope and analytical context.
-"""
+# ============================================================================
+# GA4 Dimensions (How Metrics Are Segmented)
+# ============================================================================
+# Dimensions define the row context for GA4 queries.
 
 GA4_DIMENSIONS: set[str] = {
 
-    # --------------------------------------------------
-    # TIME
-    # --------------------------------------------------
+    # ------------------------------------------------------------------
+    # Time
+    # ------------------------------------------------------------------
     "date",                        # Calendar date (YYYYMMDD)
     "week",                        # Calendar week
     "month",                       # Calendar month
 
-    # --------------------------------------------------
-    # GEO
-    # --------------------------------------------------
+    # ------------------------------------------------------------------
+    # Geography
+    # ------------------------------------------------------------------
     "country",                     # Country
     "city",                        # City
 
-    # --------------------------------------------------
-    # ACQUISITION
-    # --------------------------------------------------
-    "sessionSource",               # The source that initiated a session on your website or app.
-    "sessionMedium",               # The medium that initiated a session on your website or app.
+    # ------------------------------------------------------------------
+    # Acquisition
+    # ------------------------------------------------------------------
+    "sessionSource",               # Source that initiated a session
+    "sessionMedium",               # Medium that initiated a session
 
-    # --------------------------------------------------
-    # DEVICE / TECH
-    # --------------------------------------------------
-    "deviceCategory",              # desktop / mobile / tablet
-    "operatingSystem",             # OS name
+    # ------------------------------------------------------------------
+    # Device and Tech
+    # ------------------------------------------------------------------
+    "deviceCategory",              # Device type (desktop, mobile, tablet)
+    "operatingSystem",             # Operating system name
     "browser",                     # Browser name
 
-    # --------------------------------------------------
-    # Pages & Content
-    # --------------------------------------------------
-    "pagePath",             
-    "pageTitle",             
-    "landingPage",                 # The page path associated with the first pageview in a session.
-    "exitPage",                   
+    # ------------------------------------------------------------------
+    # Pages and Content
+    # ------------------------------------------------------------------
+    "pagePath",                    # Page URL path
+    "pageTitle",                   # Page title
+    "landingPage",                 # First page of the session
+    "exitPage",                    # Last page of the session
 
-    # --------------------------------------------------
-    # ECOMMERCE – ITEMS
-    # --------------------------------------------------
-    "itemId",                      # Item SKU / ID
+    # ------------------------------------------------------------------
+    # Ecommerce Items
+    # ------------------------------------------------------------------
+    "itemId",                      # Item SKU or ID
     "itemName",                    # Product name
     "itemBrand",                   # Product brand
     "itemVariant",                 # Variant (size, color)
@@ -166,9 +137,9 @@ GA4_DIMENSIONS: set[str] = {
     "itemCategory4",               # Category level 4
     "itemCategory5",               # Category level 5
 
-    # --------------------------------------------------
-    # ECOMMERCE – LISTS & PROMOTIONS
-    # --------------------------------------------------
+    # ------------------------------------------------------------------
+    # Ecommerce Lists and Promotions
+    # ------------------------------------------------------------------
     "itemListId",                  # Product list ID
     "itemListName",                # Product list name
     "itemListPosition",            # Position in list
@@ -176,19 +147,20 @@ GA4_DIMENSIONS: set[str] = {
     "itemPromotionId",             # Promotion ID
     "itemPromotionName",           # Promotion name
 
-    # --------------------------------------------------
-    # TRANSACTIONS
-    # --------------------------------------------------
+    # ------------------------------------------------------------------
+    # Transactions
+    # ------------------------------------------------------------------
     "transactionId",               # Unique transaction ID
     "orderCoupon",                 # Coupon code applied
-    "shippingTier",                # Shipping option / tier
+    "shippingTier",                # Shipping option or tier
     "currencyCode",                # Transaction currency
 }
 
 
-# =====================================================================
-# CORE REPORT FIELD METADATA (UI-FRIENDLY LABELS)
-# =====================================================================
+# ============================================================================
+# UI-Friendly Metadata for Report Builder
+# ============================================================================
+# These maps add labels and descriptions used in custom report UI controls.
 
 CORE_REPORT_METRICS: dict[str, dict[str, str]] = {
     "totalUsers": {
