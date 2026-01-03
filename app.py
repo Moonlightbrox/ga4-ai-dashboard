@@ -1,372 +1,406 @@
-""" app.py
-
-=====================================================================
-PURPOSE
-=====================================================================
-
-Production-ready analytics platform with comprehensive GA4 reporting.
-
-Features:
-- 8 core GA4 reports
-- Business Health Check (Claude)
-- Interactive Chat (Claude)
-- Multi-agent analysis (Groq)
-"""
 
 import streamlit as st
-import pandas as pd
 
-from analytics.raw_reports import get_all_core_reports, get_summary_statistics
-from ai.agents.orchestrator import generate_ai_summary
-from ai.claude_service import business_health_check, chat_with_data, quick_insights
+from ai.cloud import analyze_selected_reports, get_estimated_tokens
+from analytics.raw_reports import get_all_core_reports
 from components.date_selector import get_date_range
+from components.format import format_dataframe_numbers, format_token_estimate
+from data.ga4_schema import CORE_REPORT_DIMENSIONS, CORE_REPORT_METRICS
+from data.ga4_service import fetch_ga4_report
+from data.preprocess import ga4_to_dataframe
 
-
-# =====================================================================
-# PAGE SETUP
-# =====================================================================
 
 st.set_page_config(
     page_title="GA4 AI Analytics Platform",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 
-# =====================================================================
-# SESSION STATE
-# =====================================================================
-
-if "reports_loaded" not in st.session_state:
-    st.session_state.reports_loaded = False
-
-if "all_reports" not in st.session_state:
-    st.session_state.all_reports = {}
-
-if "business_check_done" not in st.session_state:
-    st.session_state.business_check_done = False
-    
-if "business_check_result" not in st.session_state:
-    st.session_state.business_check_result = None
-
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
 
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 
-if "run_multiagent" not in st.session_state:
-    st.session_state.run_multiagent = False
+if "user_reports" not in st.session_state:
+    st.session_state.user_reports = {}
 
+if "custom_report_error" not in st.session_state:
+    st.session_state.custom_report_error = None
 
-# =====================================================================
-# SIDEBAR
-# =====================================================================
+if "custom_report_success" not in st.session_state:
+    st.session_state.custom_report_success = None
 
-with st.sidebar:
-    st.header("⚙️ Settings")
-    
-    # Date selection
-    start_date, end_date = get_date_range()
-    
-    # Check if date changed - reset reports
-    current_dates = f"{start_date}_{end_date}"
-    if "last_dates" not in st.session_state:
-        st.session_state.last_dates = current_dates
-    elif st.session_state.last_dates != current_dates:
-        st.session_state.reports_loaded = False
-        st.session_state.business_check_done = False
-        st.session_state.last_dates = current_dates
-    
-    st.markdown("---")
-    
-    
-    # Report loading status
-    if st.session_state.reports_loaded:
-        st.success("✅ Data loaded")
-        if st.button("🔄 Refresh Data"):
-            st.session_state.reports_loaded = False
-            st.rerun()
-    else:
-        st.warning("⏳ Loading data...")
+if "core_reports_cache" not in st.session_state:
+    st.session_state.core_reports_cache = {}
 
+if "core_reports_date_key" not in st.session_state:
+    st.session_state.core_reports_date_key = None
 
-# =====================================================================
-# LOAD ALL REPORTS (ONCE)
-# =====================================================================
+if "reload_core_reports" not in st.session_state:
+    st.session_state.reload_core_reports = False
 
-if not st.session_state.reports_loaded:
-    with st.spinner("📊 Fetching comprehensive GA4 data..."):
-        try:
-            core_reports = get_all_core_reports(start_date, end_date)
-            st.session_state.all_reports = {
-                report_id: report_info.get("data")
-                for report_id, report_info in core_reports.items()
-            }
-            st.session_state.reports_loaded = True
-            st.rerun()
-        except Exception as e:
-            st.error(f"❌ Failed to load data: {str(e)}")
-            st.stop()
+st.title("GA4 AI Analytics Platform")
+st.caption("Production workspace for AI-assisted GA4 analysis, report scoping, and guided exploration.")
+st.divider()
 
-reports = st.session_state.all_reports
-
-
-# =====================================================================
-# HEADER & QUICK METRICS
-# =====================================================================
-
-st.title("🔍 GA4 AI Analytics Platform")
-st.caption(f"Analysis period: **{start_date}** to **{end_date}**")
-
-# Calculate summary stats
-summary = get_summary_statistics(reports)
-
-if summary:
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.metric("Total Users", f"{summary['total_users']:,.0f}")
-    
-    with col2:
-        st.metric("Sessions", f"{summary['total_sessions']:,.0f}")
-    
-    with col3:
-        st.metric("Revenue", f"${summary['total_revenue']:,.2f}")
-    
-    with col4:
-        st.metric("Transactions", f"{summary['total_transactions']:,.0f}")
-    
-    with col5:
-        st.metric("Conv. Rate", f"{summary['conversion_rate']:.2f}%")
-
-st.markdown("---")
-
-
-# =====================================================================
-# MODE 1: BUSINESS HEALTH CHECK
-# =====================================================================
-
-# Available reports in expanders
-with st.expander("📊 View Available Data"):
-    tab1, tab2, tab3, tab4 = st.tabs(["Traffic", "Trends", "Landing Pages", "More Reports"])
-    
-    with tab1:
-        st.dataframe(reports.get("traffic_overview", pd.DataFrame()), use_container_width=True)
-    
-    with tab2:
-        st.dataframe(reports.get("daily_trends", pd.DataFrame()), use_container_width=True)
-    
-    with tab3:
-        st.dataframe(reports.get("landing_pages", pd.DataFrame()), use_container_width=True)
-    
-    with tab4:
-        report_choice = st.selectbox("Select report:", [
-            "Device Performance",
-            "Ecommerce Funnel",
-            "Top Products",
-            "Geographic Breakdown",
-            "User Acquisition"
-        ])
-        
-        report_map = {
-            "Device Performance": "device_performance",
-            "Ecommerce Funnel": "ecommerce_funnel",
-            "Top Products": "top_products",
-            "Geographic Breakdown": "geographic_breakdown",
-            "User Acquisition": "user_acquisition"
-        }
-        
-        st.dataframe(reports.get(report_map[report_choice], pd.DataFrame()), use_container_width=True)
-
-"🔍 Business Health Check"
-    
-st.subheader("🔍 Comprehensive Business Health Check")
-st.caption("Claude AI analyzes all your GA4 data to provide actionable insights")
-
-col1, col2 = st.columns([1, 4])
-
-with col1:
-    if st.button("▶️ Run Analysis", type="primary", use_container_width=True):
-        st.session_state.business_check_done = True
-        with st.spinner("🤖 Claude is analyzing your business data..."):
-            try:
-                result = business_health_check(reports, start_date, end_date)
-                st.session_state.business_check_result = result
-            except Exception as e:
-                st.error(f"❌ Analysis failed: {str(e)}")
-                st.session_state.business_check_done = False
-
-# Display results
-if st.session_state.business_check_done and st.session_state.business_check_result:
-    st.markdown("---")
-    st.markdown(st.session_state.business_check_result)
-elif not st.session_state.business_check_done:
-    
-    # Show quick insights while waiting
-    with st.container():
-        st.info("💡 Quick Preview")
-        try:
-            insights = quick_insights(reports)
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown("**🎯 Key Insight**")
-                st.write(insights.get("key_insight", "N/A"))
-            with col2:
-                st.markdown("**🚨 Critical Issue**")
-                st.write(insights.get("critical_issue", "N/A"))
-            with col3:
-                st.markdown("**💡 Opportunity**")
-                st.write(insights.get("opportunity", "N/A"))
-        except:
-            pass
-    
-    st.markdown("---")
-
-
-# =====================================================================
-# MODE 2: MULTI-AGENT ANALYSIS
-# =====================================================================
-
-"🤖 Multi-Agent Analysis"
-    
-st.subheader("🤖 Multi-Agent AI Discussion")
-st.caption("AI agents (Analyst + Critic + Synthesizer) discuss your data using Groq Llama 3.1")
-
-# Prepare payload for multi-agent system
-traffic = reports.get("traffic_overview", pd.DataFrame())
-
-traffic_payload = {
-    "table_name": "traffic_overview",
-    "description": "Comprehensive traffic data by source, medium, device, and country",
-    "date_range": f"{start_date} → {end_date}",
-    "row_count": len(traffic),
-    "columns": list(traffic.columns),
-    "sample_rows": traffic.head(30).to_dict(orient="records"),
-    "summary": get_summary_statistics(reports)
+AI_BUTTON_REPORTS = {
+    "traffic_quality_assessment": [
+        "traffic_overview",
+        "daily_trends",
+        "device_performance",
+    ],
+    "conversion_funnel_leakage": [
+        "ecommerce_funnel",
+        "top_products",
+    ],
+    "landing_page_optimization": [
+        "landing_pages",
+        "device_performance",
+    ],
 }
 
-if st.button("▶️ Run Multi-Agent Discussion", type="primary"):
-    st.session_state.run_multiagent = True
-
-if st.session_state.run_multiagent:
-    ai_input = {
-        "raw_tables": {
-            "traffic": traffic_payload
-        }
-    }
-    
-    with st.spinner("🤖 AI agents are analyzing..."):
-        try:
-            ai_output = generate_ai_summary(ai_input)
-            
-            st.markdown("### 🧾 Final Summary (Synthesizer)")
-            st.markdown(ai_output["synthesizer"])
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                with st.expander("🧠 Analyst AI", expanded=False):
-                    st.markdown(ai_output["analyst"])
-            
-            with col2:
-                with st.expander("🧐 Critic AI", expanded=False):
-                    st.markdown(ai_output["critic"])
-        except Exception as e:
-            st.error(f"❌ Multi-agent analysis failed: {str(e)}")
-
-# Show data
-with st.expander("📊 View Traffic Data"):
-    st.dataframe(traffic, use_container_width=True)
+def get_reports_for_ids(report_map: dict, report_ids: list[str]) -> list[dict]:
+    selected = []
+    for report_id in report_ids:
+        report = report_map.get(report_id)
+        if not report:
+            continue
+        selected.append(report)
+    return selected
 
 
-# =====================================================================
-# MODE 3: CHAT WITH DATA
-# =====================================================================
+@st.cache_data(show_spinner=False)
+def load_core_reports_cached(start_date: str, end_date: str) -> dict[str, dict]:
+    return get_all_core_reports(start_date, end_date)
 
-    
-st.subheader("💬 Chat with Your Analytics Data")
-st.caption("Ask specific questions about your GA4 data")
 
-# Display chat history
-for message in st.session_state.chat_messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+@st.cache_data(show_spinner=False)
+def load_custom_report_cached(
+    start_date: str,
+    end_date: str,
+    metrics: tuple[str, ...],
+    dimensions: tuple[str, ...],
+):
+    response = fetch_ga4_report(
+        start_date=start_date,
+        end_date=end_date,
+        metrics=list(metrics),
+        dimensions=list(dimensions),
+    )
+    return ga4_to_dataframe(response)
 
-# Chat input
-if prompt := st.chat_input("Ask a question about your analytics data..."):
-    
-    # Add user message to chat
-    st.session_state.chat_messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    
-    # Get Claude response
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            try:
-                response = chat_with_data(
-                    reports=reports,
-                    user_question=prompt,
-                    conversation_history=st.session_state.chat_history,
-                    start_date=start_date,
-                    end_date=end_date
+
+col_chat, col_reports = st.columns([3, 2])
+
+with st.sidebar:
+    st.header("Date range")
+    start_date, end_date = get_date_range()
+    if st.button("Refresh data"):
+        st.session_state.reload_core_reports = True
+    st.divider()
+    st.subheader("AI Data Coverage")
+    coverage_options = list(range(10, 101, 10))
+    selected_coverage = st.selectbox(
+        "AI Data Coverage",
+        options=coverage_options,
+        index=8,
+        key="ai_data_coverage",
+        format_func=lambda value: f"{value}%",
+        label_visibility="collapsed",
+    )
+
+date_key = f"{start_date}_{end_date}"
+if st.session_state.core_reports_date_key != date_key:
+    st.session_state.reload_core_reports = True
+
+core_reports = st.session_state.core_reports_cache
+if st.session_state.reload_core_reports or not core_reports:
+    try:
+        # Cache reports by date to avoid redundant GA4 fetches on UI-only reruns.
+        core_reports = load_core_reports_cached(start_date, end_date)
+        st.session_state.core_reports_cache = core_reports
+        st.session_state.core_reports_date_key = date_key
+        st.session_state.reload_core_reports = False
+    except Exception as exc:
+        core_reports = {}
+        st.session_state.core_reports_cache = {}
+        st.sidebar.error(f"Failed to load reports: {exc}")
+
+combined_reports = {**core_reports, **st.session_state.user_reports}
+
+with col_reports:
+    st.subheader("\U0001F4CA Reports")
+    st.caption("Select the reports to include in the AI analysis.")
+
+    bulk_cols = st.columns(3)
+    select_all = bulk_cols[0].button("Select all reports")
+    select_basic = bulk_cols[1].button("Select basic reports")
+    select_user = bulk_cols[2].button("Select user reports")
+
+    user_group_options = ["All user reports"]
+    if st.session_state.user_reports:
+        user_group_options.extend(sorted({
+            report.get("group")
+            for report in st.session_state.user_reports.values()
+            if report.get("group")
+        }))
+    selected_user_group = st.selectbox(
+        "User report group",
+        options=user_group_options,
+        key="user_report_group",
+    )
+
+    if select_all:
+        for report in combined_reports.values():
+            st.session_state[f"report_{report['id']}"] = True
+
+    if select_basic:
+        for report in combined_reports.values():
+            st.session_state[f"report_{report['id']}"] = False
+        for report in core_reports.values():
+            st.session_state[f"report_{report['id']}"] = True
+
+    if select_user:
+        for report in combined_reports.values():
+            st.session_state[f"report_{report['id']}"] = False
+        if not st.session_state.user_reports:
+            st.info("No user reports available yet.")
+        else:
+            matched_group = False
+            for report in st.session_state.user_reports.values():
+                if selected_user_group == "All user reports" or report.get("group") == selected_user_group:
+                    st.session_state[f"report_{report['id']}"] = True
+                    matched_group = True
+            if selected_user_group != "All user reports" and not matched_group:
+                st.info("No reports found in that group.")
+
+    selected_reports = []
+    ordered_reports = list(core_reports.values()) + list(st.session_state.user_reports.values())
+    for report in ordered_reports:
+        is_user_report = report["id"] in st.session_state.user_reports
+        if is_user_report:
+            checkbox_col, delete_col = st.columns([6, 1])
+            with checkbox_col:
+                checked = st.checkbox(
+                    report["name"],
+                    help=report["description"],
+                    key=f"report_{report['id']}",
                 )
-                st.markdown(response)
-                
-                # Update history
-                st.session_state.chat_messages.append({"role": "assistant", "content": response})
-                st.session_state.chat_history.append({"role": "user", "content": prompt})
-                st.session_state.chat_history.append({"role": "assistant", "content": response})
-                
-            except Exception as e:
-                st.error(f"❌ Chat error: {str(e)}")
+            with delete_col:
+                if st.button("\U0001F5D1", key=f"delete_{report['id']}", help="Delete report"):
+                    st.session_state.user_reports.pop(report["id"], None)
+                    st.session_state.pop(f"report_{report['id']}", None)
+                    st.rerun()
+        else:
+            checked = st.checkbox(
+                report["name"],
+                help=report["description"],
+                key=f"report_{report['id']}",
+            )
 
-# Suggested questions
-if len(st.session_state.chat_messages) == 0:
-    st.markdown("### 💡 Try asking:")
-    
-    col1, col2 = st.columns(2)
-    
-    questions = [
-        "Why is my paid advertising not converting?",
-        "Which traffic source has the best ROI?",
-        "How can I improve mobile conversions?",
-        "What are my top performing landing pages?",
-        "Which countries should I focus on?",
-        "What's causing revenue decline?",
+        if checked:
+            selected_reports.append(report)
+
+    st.divider()
+
+    if selected_reports:
+        st.markdown("**Report Preview:**")
+        preview_tabs = st.tabs([report["name"] for report in selected_reports])
+        for tab, report in zip(preview_tabs, selected_reports):
+            with tab:
+                # Data sourced from analytics/raw_reports.py (single source of truth).
+                try:
+                    preview_df = report.get("data")
+                    if preview_df is None:
+                        st.info("No data available for this report.")
+                    elif getattr(preview_df, "empty", False):
+                        st.info("No rows returned for this report.")
+                    else:
+                        # UI-only formatting for this page.
+                        # Raw report data remains unchanged.
+                        formatted_df = format_dataframe_numbers(preview_df)
+                        st.dataframe(formatted_df, use_container_width=True)
+                except Exception as exc:
+                    st.warning(f"Unable to load this report: {exc}")
+    else:
+        st.info("Select a report to preview its data.")
+
+    st.divider()
+
+    with st.expander("Advanced: Custom Report Builder"):
+        st.caption("Create custom GA4 reports using approved metrics and dimensions.")
+
+        metric_options = list(CORE_REPORT_METRICS.keys())
+        dimension_options = list(CORE_REPORT_DIMENSIONS.keys())
+
+        def metric_label(metric_id):
+            meta = CORE_REPORT_METRICS[metric_id]
+            return f"{meta['label']} - {meta['description']} ({metric_id})"
+
+        def dimension_label(dimension_id):
+            meta = CORE_REPORT_DIMENSIONS[dimension_id]
+            return f"{meta['label']} - {meta['description']} ({dimension_id})"
+
+        selected_dimensions = st.multiselect(
+            "Dimensions",
+            dimension_options,
+            format_func=dimension_label,
+        )
+        selected_metrics = st.multiselect(
+            "Metrics",
+            metric_options,
+            format_func=metric_label,
+        )
+        report_name = st.text_input("Report name (optional)")
+        report_group = st.text_input("Report group (optional)")
+
+        if st.button("Create report"):
+            st.session_state.custom_report_error = None
+            st.session_state.custom_report_success = None
+
+            if not selected_dimensions or not selected_metrics:
+                st.session_state.custom_report_error = (
+                    "Select at least one dimension and one metric."
+                )
+            else:
+                try:
+                    # Cache custom report fetches by date, metrics, and dimensions.
+                    report_df = load_custom_report_cached(
+                        start_date=start_date,
+                        end_date=end_date,
+                        metrics=tuple(selected_metrics),
+                        dimensions=tuple(selected_dimensions),
+                    )
+
+                    report_id = f"user_{len(st.session_state.user_reports) + 1}"
+                    display_name = report_name.strip() if report_name else f"Custom Report {len(st.session_state.user_reports) + 1}"
+                    group_name = report_group.strip() if report_group else None
+                    description = (
+                        f"Dimensions: {', '.join(selected_dimensions)} | "
+                        f"Metrics: {', '.join(selected_metrics)}"
+                    )
+
+                    # User-defined report (Phase 2).
+                    st.session_state.user_reports[report_id] = {
+                        "id": report_id,
+                        "name": display_name,
+                        "description": description,
+                        "group": group_name,
+                        "data": report_df,
+                    }
+                    st.session_state.custom_report_success = "Custom report created."
+                    st.rerun()
+                except Exception:
+                    st.session_state.custom_report_error = (
+                        "The selected metrics and dimensions are not compatible. "
+                        "Please try a different combination."
+                    )
+
+        if st.session_state.custom_report_error:
+            st.error(st.session_state.custom_report_error)
+        if st.session_state.custom_report_success:
+            st.success(st.session_state.custom_report_success)
+
+
+with col_chat:
+    st.subheader("\U0001F4AC AI Analysis")
+    st.caption("Ask targeted questions about the selected reports.")
+
+    template_questions = [
+        {
+            "label": "Traffic Analysis",
+            "prompt_key": "traffic_quality_assessment",
+        },
+        {
+            "label": "Conversion Funnel Leakage",
+            "prompt_key": "conversion_funnel_leakage",
+        },
+        {
+            "label": "Landing Page Optimization",
+            "prompt_key": "landing_page_optimization",
+        },
     ]
-    
-    for i, question in enumerate(questions):
-        col = col1 if i % 2 == 0 else col2
-        with col:
-            if st.button(question, use_container_width=True, key=f"q_{i}"):
-                st.session_state.chat_messages.append({
-                    "role": "user", 
-                    "content": question
-                })
-                st.rerun()
 
-# Clear chat button
-if len(st.session_state.chat_messages) > 0:
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button("🗑️ Clear Chat"):
+    template_cols = st.columns(len(template_questions))
+    clicked_template = None
+    for idx, question in enumerate(template_questions):
+        with template_cols[idx]:
+            required_report_ids = AI_BUTTON_REPORTS.get(question["prompt_key"], [])
+            required_reports = get_reports_for_ids(combined_reports, required_report_ids)
+            estimated_tokens = get_estimated_tokens(
+                selected_reports=required_reports,
+                user_question=question["label"],
+                prompt_key=question["prompt_key"],
+            )
+            display_tokens = int(estimated_tokens * (selected_coverage / 100))
+            button_label = f"{question['label']}  {format_token_estimate(display_tokens)}"
+            if st.button(button_label, key=f"template_{idx}"):
+                clicked_template = question
+
+    for message in st.session_state.chat_messages:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
+
+    input_col, cost_col, clear_col = st.columns([6, 1, 1])
+    with input_col:
+        user_input = st.chat_input("Ask a question about your data", key="scoping_chat_prompt")
+    chat_prompt_preview = st.session_state.get("scoping_chat_prompt", "")
+    chat_estimated_tokens = get_estimated_tokens(
+        selected_reports=selected_reports,
+        user_question=chat_prompt_preview,
+        prompt_key=None,
+    )
+    chat_display_tokens = int(chat_estimated_tokens * (selected_coverage / 100))
+    with cost_col:
+        st.markdown(
+            f"<div style='text-align: right;'>{format_token_estimate(chat_display_tokens)}</div>",
+            unsafe_allow_html=True,
+        )
+    with clear_col:
+        if st.button("\U0001F5D1", help="Clear chat"):
             st.session_state.chat_messages = []
-            st.session_state.chat_history = []
             st.rerun()
 
+    prompt_key = None
+    required_reports = []
+    if clicked_template:
+        user_input = clicked_template["label"]
+        prompt_key = clicked_template["prompt_key"]
+        required_report_ids = AI_BUTTON_REPORTS.get(prompt_key, [])
+        required_reports = get_reports_for_ids(combined_reports, required_report_ids)
 
-# =====================================================================
-# FOOTER
-# =====================================================================
+    if user_input:
+        if not prompt_key and not selected_reports:
+            st.warning("Please select at least one report to continue.")
+        else:
+            report_payload = required_reports if prompt_key else selected_reports
+            st.session_state.chat_messages.append({
+                "role": "user",
+                "content": user_input,
+            })
 
-st.markdown("---")
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    response_text = analyze_selected_reports(
+                        selected_reports=report_payload,
+                        user_question=user_input,
+                        prompt_key=prompt_key,
+                    )
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.caption("🔍 GA4 AI Analytics Platform")
-with col2:
-    st.caption(f"📊 {len(reports)} reports loaded")
-with col3:
-    st.caption("🤖 Powered by Claude & Anthropic")
+                    st.write(response_text)
+                    st.session_state.chat_messages.append({
+                        "role": "assistant",
+                        "content": response_text,
+                    })
+
+
+
+
+
+
+
+
+
+
+
+

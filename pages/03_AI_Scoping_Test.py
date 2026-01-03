@@ -1,4 +1,4 @@
-﻿
+
 import streamlit as st
 
 from ai.cloud import analyze_selected_reports, get_estimated_tokens
@@ -11,7 +11,7 @@ from data.preprocess import ga4_to_dataframe
 
 
 st.set_page_config(
-    page_title="AI Scoping Test",
+    page_title="Test Page",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -392,6 +392,7 @@ with col_chat:
                         "role": "assistant",
                         "content": response_text,
                     })
+
 
 
 
