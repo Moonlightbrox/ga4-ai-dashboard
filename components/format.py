@@ -1,98 +1,166 @@
-# This module formats numeric values for display in the Streamlit UI.
-# It provides helpers for human-friendly numbers and token estimates.
+"""
+This module provides formatting utilities for numeric, ratio, duration,
+and token-related values used throughout the Streamlit UI.
+It ensures consistent, readable, and user-friendly presentation.
+"""
 
-# This function formats a single numeric value, optionally as currency.
+# ============================================================================
+# Ratio Column Registry
+# ============================================================================
+# These columns should retain decimal precision when formatting.
+
+RATIO_COLUMNS = {
+    "Revenue per User",
+    "Revenue per Active User",
+    "Revenue per Session",
+    "Sessions per User",
+    "Conversion Rate",
+    "View -> Cart Conversion Rate",
+    "Cart -> Checkout Conversion Rate",
+    "Checkout -> Purchase Conversion Rate",
+    "Item View -> Purchase Conversion Rate",
+    "Revenue per Item View",
+    "Revenue per Purchase",
+    "View -> Item View Conversion Rate",
+    "Item View -> Cart Conversion Rate",
+    "Revenue per Transaction",
+    "revenue_per_user",
+    "revenue_per_active_user",
+    "revenue_per_session",
+    "sessions_per_user",
+    "conversion_rate",
+    "view_to_cart_rate",
+    "cart_to_checkout_rate",
+    "checkout_to_purchase_rate",
+    "item_view_to_purchase_rate",
+    "revenue_per_item_view",
+    "revenue_per_purchase",
+    "pageview_to_item_view_rate",
+    "item_view_to_cart_rate",
+    "revenue_per_transaction",
+}
+
+
+# Formats a single numeric value for UI display.
 def format_number(
-    value,                                                                 # Raw value to format
-    currency=False,                                                        # When True, prefix with a currency symbol
+    value,                          # Raw input value
+    currency=False,                 # Whether to prefix currency symbol
 ):
     if value is None:
-        return "-"                                                           # Return placeholder for missing values
+        return "-"                  # Placeholder for missing values
 
     try:
-        num = float(value)                                                   # Convert input to a number when possible
-    except (ValueError, TypeError):                                          # Handle non-numeric input safely
-        return str(value)                                                    # Return original value as a string
+        num = float(value)
+    except (ValueError, TypeError):  # Handle non-numeric inputs safely
+        return str(value)
 
     if num == 0:
-        return "\u0192,_0" if currency else "0"                              # Return zero with optional currency symbol
+        return "ƒ,_0" if currency else "0"
 
     if abs(num) >= 1_000_000:
-        formatted = f"{num / 1_000_000:.1f}M"                                # Use millions shorthand for large values
+        formatted = f"{num / 1_000_000:.1f}M"
     elif abs(num) >= 1_000:
-        formatted = f"{num / 1_000:.1f}K"                                    # Use thousands shorthand for mid values
+        formatted = f"{num / 1_000:.1f}K"
     else:
-        formatted = f"{num:.2f}"                                             # Use two decimals for small values
+        formatted = f"{num:.2f}"
 
-    formatted = formatted.rstrip("0").rstrip(".")                           # Trim trailing zeros and dots for cleaner output
+    formatted = formatted.rstrip("0").rstrip(".")
+    return f"ƒ,_{formatted}" if currency else formatted
 
-    return f"\u0192,_{formatted}" if currency else formatted                  # Return formatted string with optional currency
 
-
-# This function formats all numeric columns in a DataFrame for UI display.
+# Formats numeric columns inside a DataFrame.
 def format_dataframe_numbers(
-    df,                                                                    # DataFrame to format
-    decimals=0,                                                            # Number of decimals to round to
+    df,                             # DataFrame to format
+    decimals=0,                     # Default decimal precision
 ):
     if df is None:
-        return df                                                            # Return original input when no DataFrame exists
+        return df                   # Preserve None input
 
     try:
-        numeric_cols = df.select_dtypes(include="number").columns            # Identify numeric columns for rounding
-    except AttributeError:                                                   # Handle non-DataFrame input safely
-        return df                                                            # Return original input when not a DataFrame
+        numeric_cols = df.select_dtypes(include="number").columns
+    except AttributeError:           # Handle non-DataFrame input
+        return df
 
-    if len(numeric_cols) == 0:
-        return df                                                            # Return original input when no numeric columns
+    if not numeric_cols.any():
+        return df
 
-    formatted = df.copy()                                                    # Copy to avoid mutating the original data
-    rounded = formatted[numeric_cols].round(decimals)                        # Round numeric columns to desired precision
+    formatted = df.copy()
+    ratio_cols = [c for c in numeric_cols if c in RATIO_COLUMNS]
+    rounded = formatted[numeric_cols].round(decimals)
+
+    if ratio_cols:
+        rounded[ratio_cols] = formatted[ratio_cols].round(2)  # Preserve ratio precision
 
     if decimals == 0:
         for col in numeric_cols:
+            if col in ratio_cols:
+                continue
             try:
-                rounded[col] = rounded[col].astype("Int64")                  # Use integer display when no decimals are needed
-            except (TypeError, ValueError):                                  # Handle columns that cannot be cast safely
-                pass                                                         # Leave column as-is when conversion fails
+                rounded[col] = rounded[col].astype("Int64")
+            except (TypeError, ValueError):                    # Skip incompatible columns
+                pass
 
-    formatted[numeric_cols] = rounded                                        # Replace numeric columns with formatted values
-    return formatted                                                         # Return the formatted DataFrame
+    formatted[numeric_cols] = rounded
+    return formatted                   # Return formatted DataFrame
 
 
-# This function converts a token count into a human-friendly string.
-def format_token_number(
-    tokens: int,                                                           # Token count to format
-) -> str:
+# Formats seconds into HH:MM:SS duration strings.
+def format_duration(value):
+    def _format_seconds(seconds):
+        if seconds is None:
+            return "00:00:00"
+        try:
+            total_seconds = int(float(seconds))
+        except (TypeError, ValueError):
+            return "00:00:00"
+        if total_seconds < 0:
+            total_seconds = 0
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    if hasattr(value, "apply"):
+        return value.apply(_format_seconds)
+    return _format_seconds(value)
+
+
+# Rounds a metric safely for both scalars and pandas Series.
+def round_metric(value, decimals=2):
+    try:
+        return value.astype("Float64").round(decimals)
+    except AttributeError:
+        try:
+            return round(float(value), decimals)
+        except (TypeError, ValueError):
+            return value
+
+
+# Converts token counts into compact strings.
+def format_token_number(tokens: int) -> str:
     if tokens >= 1000:
-        return f"~{int(round(tokens / 1000))}k"                               # Return compact thousands representation
-    return f"~{tokens}"                                                      # Return raw token count with prefix
+        return f"~{int(round(tokens / 1000))}k"
+    return f"~{tokens}"
 
 
-# This function maps a token count to a status color label.
-def token_status(
-    tokens: int,                                                           # Token count to classify
-) -> str:
+# Assigns a status color based on token count.
+def token_status(tokens: int) -> str:
     if tokens < 20000:
-        return "green"                                                      # Safe token size range
+        return "green"
     if tokens <= 60000:
-        return "yellow"                                                     # Warning range for larger prompts
-    return "red"                                                            # High token range to avoid
+        return "yellow"
+    return "red"
 
 
-# This function selects a colored emoji based on token size.
-def token_emoji(
-    tokens: int,                                                           # Token count used for emoji selection
-) -> str:
-    status = token_status(tokens)                                            # Determine token size category
+# Returns an emoji representing token size status.
+def token_emoji(tokens: int) -> str:
+    status = token_status(tokens)
     if status == "green":
-        return "\U0001F7E2"                                                  # Green circle emoji
+        return "🟢"
     if status == "yellow":
-        return "\U0001F7E1"                                                  # Yellow circle emoji
-    return "\U0001F534"                                                      # Red circle emoji
+        return "🟡"
+    return "🔴"
 
 
-# This function formats a full token estimate string for the UI.
-def format_token_estimate(
-    tokens: int,                                                           # Token count to format
-) -> str:
-    return f"{token_emoji(tokens)} {format_token_number(tokens)}"            # Return emoji + compact token count
+# Combines emoji and formatted token count for UI display.
+def format_token_estimate(tokens: int) -> str:
+    return f"{token_emoji(tokens)} {format_token_number(tokens)}"

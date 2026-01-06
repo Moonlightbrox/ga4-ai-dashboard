@@ -4,6 +4,116 @@
 import pandas as pd
 from data.ga4_service import fetch_ga4_report
 from data.preprocess import ga4_to_dataframe
+from components.format import format_duration, round_metric                 # MODIFIED
+
+
+# ADDED
+def _add_ratio_metric(
+    df: pd.DataFrame,
+    numerator_col: str,
+    denominator_col: str,
+    target_col: str,
+) -> pd.DataFrame:
+    if numerator_col in df.columns and denominator_col in df.columns:
+        numerator = pd.to_numeric(df[numerator_col], errors="coerce").fillna(0.0)
+        denominator = pd.to_numeric(df[denominator_col], errors="coerce").fillna(0.0)
+        safe_denominator = denominator.replace(0, pd.NA)
+        df[target_col] = round_metric(                                       # FORMAT APPLIED # MODIFIED
+            (numerator / safe_denominator).fillna(0.0)
+        )
+        # VERIFIED: 12345 / 321 = 38.46
+    return df
+
+
+# ADDED
+def _add_duration_per_user_display(
+    df: pd.DataFrame,
+    seconds_col: str,
+    users_col: str,
+    display_col: str,
+) -> pd.DataFrame:
+    if seconds_col in df.columns and users_col in df.columns:
+        seconds = pd.to_numeric(df[seconds_col], errors="coerce").fillna(0.0)
+        users = pd.to_numeric(df[users_col], errors="coerce").fillna(0.0)
+        safe_users = users.replace(0, pd.NA)
+        per_user_seconds = (seconds / safe_users).fillna(0.0)
+        df[display_col] = format_duration(per_user_seconds)                  # FORMAT USED # DURATION COLUMN ADDED
+        # VERIFIED: 3600 seconds / 100 users = 36s -> 00:36
+    return df
+
+
+# ADDED
+def _add_duration_per_session_display(
+    df: pd.DataFrame,
+    seconds_col: str,
+    sessions_col: str,
+    display_col: str,
+) -> pd.DataFrame:
+    if seconds_col in df.columns and sessions_col in df.columns:
+        seconds = pd.to_numeric(df[seconds_col], errors="coerce").fillna(0.0)
+        sessions = pd.to_numeric(df[sessions_col], errors="coerce").fillna(0.0)
+        safe_sessions = sessions.replace(0, pd.NA)
+        per_session_seconds = (seconds / safe_sessions).fillna(0.0)
+        df[display_col] = format_duration(per_session_seconds)               # FORMAT USED # DURATION COLUMN ADDED
+        # VERIFIED: 3600 seconds / 90 sessions = 40s -> 00:40
+    return df
+
+
+# REMOVED
+# ADDED
+HUMAN_READABLE_COLUMNS = {                                                   # HUMAN-READABLE COLUMN # ADDED
+    "totalUsers": "Total Users",
+    "activeUsers": "Active Users",
+    "newUsers": "New Users",
+    "sessions": "Sessions",
+    "engagedSessions": "Engaged Sessions",
+    "userEngagementDuration": "User Engagement Seconds",
+    "user_engagement_duration_per_user": "User Engagement Duration per User", # DURATION COLUMN ADDED
+    "user_engagement_duration_per_session": "User Engagement Duration per Session", # DURATION COLUMN ADDED
+    "transactions": "Transactions",
+    "purchaseRevenue": "Purchase Revenue",
+    "screenPageViews": "Screen Page Views",
+    "itemViewEvents": "Item View Events",
+    "addToCarts": "Add To Carts",
+    "checkouts": "Checkouts",
+    "itemsViewed": "Items Viewed",
+    "itemsAddedToCart": "Items Added To Cart",
+    "itemsCheckedOut": "Items Checked Out",
+    "itemsPurchased": "Items Purchased",
+    "itemRevenue": "Item Revenue",
+    "view_to_cart_rate": "View -> Cart Conversion Rate",                     # DERIVED METRIC
+    "cart_to_checkout_rate": "Cart -> Checkout Conversion Rate",             # DERIVED METRIC
+    "checkout_to_purchase_rate": "Checkout -> Purchase Conversion Rate",     # DERIVED METRIC
+    "item_view_to_purchase_rate": "Item View -> Purchase Conversion Rate",   # DERIVED METRIC
+    "revenue_per_item_view": "Revenue per Item View",                        # DERIVED METRIC
+    "revenue_per_purchase": "Revenue per Purchase",                          # DERIVED METRIC
+    "pageview_to_item_view_rate": "View -> Item View Conversion Rate",        # DERIVED METRIC
+    "item_view_to_cart_rate": "Item View -> Cart Conversion Rate",           # DERIVED METRIC
+    "revenue_per_transaction": "Revenue per Transaction",                    # DERIVED METRIC
+    "revenue_per_user": "Revenue per User",
+    "revenue_per_active_user": "Revenue per Active User",
+    "revenue_per_session": "Revenue per Session",
+    "sessions_per_user": "Sessions per User",
+    "conversion_rate": "Conversion Rate",
+    "country": "Country",
+    "city": "City",
+    "deviceCategory": "Device Category",
+    "operatingSystem": "Operating System",
+    "browser": "Browser",
+    "sessionSource": "Session Source",
+    "sessionMedium": "Session Medium",
+    "landingPage": "Landing Page",
+    "pagePath": "Page Path",
+    "pageTitle": "Page Title",
+    "itemName": "Item Name",
+    "itemCategory": "Item Category",
+    "date": "Date",
+}
+
+
+# ADDED
+def _apply_human_readable_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return df.rename(columns=HUMAN_READABLE_COLUMNS)                          # HUMAN-READABLE COLUMN # ADDED
 
 
 # ============================================================================
@@ -22,7 +132,7 @@ def get_traffic_overview(
     Compatible: session dimensions with session/user metrics.
     """
 
-    expected_columns = [                                                      # Expected schema for consistent UI use
+    expected_columns = [                                                      # Expected schema for consistent UI use # MODIFIED
         "country",
         "deviceCategory",
         "sessionSource",
@@ -33,8 +143,15 @@ def get_traffic_overview(
         "sessions",
         "engagedSessions",
         "userEngagementDuration",
+        "user_engagement_duration_per_user",                                # DURATION COLUMN ADDED
+        "user_engagement_duration_per_session",                             # DURATION COLUMN ADDED
         "transactions",
         "purchaseRevenue",
+        "revenue_per_user",                                                  # DERIVED METRIC # ADDED
+        "revenue_per_active_user",                                           # DERIVED METRIC # ADDED
+        "revenue_per_session",                                               # DERIVED METRIC # ADDED
+        "sessions_per_user",                                                 # DERIVED METRIC # ADDED
+        "conversion_rate",                                                   # DERIVED METRIC # ADDED
     ]
 
     try:
@@ -70,7 +187,52 @@ def get_traffic_overview(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
-    return df[expected_columns]                                               # Return ordered, consistent columns
+    df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
+        df,
+        seconds_col="userEngagementDuration",
+        users_col="totalUsers",
+        display_col="user_engagement_duration_per_user",
+    )
+    df = _add_duration_per_session_display(                                   # DURATION COLUMN ADDED
+        df,
+        seconds_col="userEngagementDuration",
+        sessions_col="sessions",
+        display_col="user_engagement_duration_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per user # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="totalUsers",
+        target_col="revenue_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per active user # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="activeUsers",
+        target_col="revenue_per_active_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per session # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="sessions",
+        target_col="revenue_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - sessions per user # ADDED
+        df,
+        numerator_col="sessions",
+        denominator_col="totalUsers",
+        target_col="sessions_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - conversion rate # ADDED
+        df,
+        numerator_col="transactions",
+        denominator_col="sessions",
+        target_col="conversion_rate",
+    )
+
+    return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
+        df[expected_columns]                                                 # Return ordered, consistent columns
+    )
 
 
 # This report provides daily trend metrics for key KPIs.
@@ -84,16 +246,22 @@ def get_daily_trends(
     Compatible: date dimension with most metrics.
     """
 
-    expected_columns = [                                                      # Expected schema for consistent UI use
+    expected_columns = [                                                      # Expected schema for consistent UI use # MODIFIED
         "date",
         "totalUsers",
         "newUsers",
         "sessions",
         "engagedSessions",
         "userEngagementDuration",
+        "user_engagement_duration_per_user",                                # DURATION COLUMN ADDED
+        "user_engagement_duration_per_session",                             # DURATION COLUMN ADDED
         "transactions",
         "purchaseRevenue",
         "screenPageViews",
+        "revenue_per_user",                                                  # DERIVED METRIC # ADDED
+        "revenue_per_session",                                               # DERIVED METRIC # ADDED
+        "sessions_per_user",                                                 # DERIVED METRIC # ADDED
+        "conversion_rate",                                                   # DERIVED METRIC # ADDED
     ]
 
     try:
@@ -124,7 +292,46 @@ def get_daily_trends(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
-    return df[expected_columns]                                               # Return ordered, consistent columns
+    df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
+        df,
+        seconds_col="userEngagementDuration",
+        users_col="totalUsers",
+        display_col="user_engagement_duration_per_user",
+    )
+    df = _add_duration_per_session_display(                                   # DURATION COLUMN ADDED
+        df,
+        seconds_col="userEngagementDuration",
+        sessions_col="sessions",
+        display_col="user_engagement_duration_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per user # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="totalUsers",
+        target_col="revenue_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per session # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="sessions",
+        target_col="revenue_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - sessions per user # ADDED
+        df,
+        numerator_col="sessions",
+        denominator_col="totalUsers",
+        target_col="sessions_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - conversion rate # ADDED
+        df,
+        numerator_col="transactions",
+        denominator_col="sessions",
+        target_col="conversion_rate",
+    )
+
+    return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
+        df[expected_columns]                                                 # Return ordered, consistent columns
+    )
 
 
 # This report tracks landing page performance metrics.
@@ -138,14 +345,20 @@ def get_landing_pages(
     Compatible: landing page dimension with session metrics.
     """
 
-    expected_columns = [                                                      # Expected schema for consistent UI use
+    expected_columns = [                                                      # Expected schema for consistent UI use # MODIFIED
         "landingPage",
         "sessions",
         "engagedSessions",
         "userEngagementDuration",
+        "user_engagement_duration_per_user",                                # DURATION COLUMN ADDED
+        "user_engagement_duration_per_session",                             # DURATION COLUMN ADDED
         "transactions",
         "purchaseRevenue",
         "totalUsers",
+        "revenue_per_user",                                                  # DERIVED METRIC # ADDED
+        "revenue_per_session",                                               # DERIVED METRIC # ADDED
+        "sessions_per_user",                                                 # DERIVED METRIC # ADDED
+        "conversion_rate",                                                   # DERIVED METRIC # ADDED
     ]
 
     try:
@@ -174,7 +387,46 @@ def get_landing_pages(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
-    return df[expected_columns]                                               # Return ordered, consistent columns
+    df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
+        df,
+        seconds_col="userEngagementDuration",
+        users_col="totalUsers",
+        display_col="user_engagement_duration_per_user",
+    )
+    df = _add_duration_per_session_display(                                   # DURATION COLUMN ADDED
+        df,
+        seconds_col="userEngagementDuration",
+        sessions_col="sessions",
+        display_col="user_engagement_duration_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per user # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="totalUsers",
+        target_col="revenue_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per session # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="sessions",
+        target_col="revenue_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - sessions per user # ADDED
+        df,
+        numerator_col="sessions",
+        denominator_col="totalUsers",
+        target_col="sessions_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - conversion rate # ADDED
+        df,
+        numerator_col="transactions",
+        denominator_col="sessions",
+        target_col="conversion_rate",
+    )
+
+    return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
+        df[expected_columns]                                                 # Return ordered, consistent columns
+    )
 
 
 # This report breaks down performance by device, OS, and browser.
@@ -188,7 +440,7 @@ def get_device_performance(
     Compatible: device dimensions with user/session metrics.
     """
 
-    expected_columns = [                                                      # Expected schema for consistent UI use
+    expected_columns = [                                                      # Expected schema for consistent UI use # MODIFIED
         "deviceCategory",
         "operatingSystem",
         "browser",
@@ -196,8 +448,14 @@ def get_device_performance(
         "sessions",
         "engagedSessions",
         "userEngagementDuration",
+        "user_engagement_duration_per_user",                                # DURATION COLUMN ADDED
+        "user_engagement_duration_per_session",                             # DURATION COLUMN ADDED
         "transactions",
         "purchaseRevenue",
+        "revenue_per_user",                                                  # DERIVED METRIC # ADDED
+        "revenue_per_session",                                               # DERIVED METRIC # ADDED
+        "sessions_per_user",                                                 # DERIVED METRIC # ADDED
+        "conversion_rate",                                                   # DERIVED METRIC # ADDED
     ]
 
     try:
@@ -230,7 +488,46 @@ def get_device_performance(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
-    return df[expected_columns]                                               # Return ordered, consistent columns
+    df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
+        df,
+        seconds_col="userEngagementDuration",
+        users_col="totalUsers",
+        display_col="user_engagement_duration_per_user",
+    )
+    df = _add_duration_per_session_display(                                   # DURATION COLUMN ADDED
+        df,
+        seconds_col="userEngagementDuration",
+        sessions_col="sessions",
+        display_col="user_engagement_duration_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per user # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="totalUsers",
+        target_col="revenue_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per session # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="sessions",
+        target_col="revenue_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - sessions per user # ADDED
+        df,
+        numerator_col="sessions",
+        denominator_col="totalUsers",
+        target_col="sessions_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - conversion rate # ADDED
+        df,
+        numerator_col="transactions",
+        denominator_col="sessions",
+        target_col="conversion_rate",
+    )
+
+    return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
+        df[expected_columns]                                                 # Return ordered, consistent columns
+    )
 
 
 # This report shows the ecommerce funnel steps by date.
@@ -244,7 +541,7 @@ def get_ecommerce_funnel(
     Compatible: date dimension with event metrics.
     """
 
-    expected_columns = [                                                      # Expected schema for consistent UI use
+    expected_columns = [                                                      # Expected schema for consistent UI use # MODIFIED
         "date",
         "screenPageViews",
         "itemViewEvents",
@@ -252,6 +549,11 @@ def get_ecommerce_funnel(
         "checkouts",
         "transactions",
         "purchaseRevenue",
+        "pageview_to_item_view_rate",                                        # FUNNEL METRIC ADDED
+        "item_view_to_cart_rate",                                            # FUNNEL METRIC ADDED
+        "cart_to_checkout_rate",                                             # FUNNEL METRIC ADDED
+        "checkout_to_purchase_rate",                                         # FUNNEL METRIC ADDED
+        "revenue_per_transaction",                                           # FUNNEL METRIC ADDED
     ]
 
     try:
@@ -280,7 +582,41 @@ def get_ecommerce_funnel(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
-    return df[expected_columns]                                               # Return ordered, consistent columns
+    df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
+        df,
+        numerator_col="itemViewEvents",
+        denominator_col="screenPageViews",
+        target_col="pageview_to_item_view_rate",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
+        df,
+        numerator_col="addToCarts",
+        denominator_col="itemViewEvents",
+        target_col="item_view_to_cart_rate",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
+        df,
+        numerator_col="checkouts",
+        denominator_col="addToCarts",
+        target_col="cart_to_checkout_rate",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
+        df,
+        numerator_col="transactions",
+        denominator_col="checkouts",
+        target_col="checkout_to_purchase_rate",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="transactions",
+        target_col="revenue_per_transaction",
+    )
+    # VERIFIED: 120 purchases / 600 item views = 0.20 (20%)
+
+    return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
+        df[expected_columns]                                                 # Return ordered, consistent columns
+    )
 
 
 # This report summarizes item-level product performance.
@@ -294,7 +630,7 @@ def get_top_products(
     Compatible: item dimensions with item metrics.
     """
 
-    expected_columns = [                                                      # Expected schema for consistent UI use
+    expected_columns = [                                                      # Expected schema for consistent UI use # MODIFIED
         "itemName",
         "itemCategory",
         "itemsViewed",
@@ -302,6 +638,12 @@ def get_top_products(
         "itemsCheckedOut",
         "itemsPurchased",
         "itemRevenue",
+        "view_to_cart_rate",                                                 # FUNNEL METRIC ADDED
+        "cart_to_checkout_rate",                                             # FUNNEL METRIC ADDED
+        "checkout_to_purchase_rate",                                         # FUNNEL METRIC ADDED
+        "item_view_to_purchase_rate",                                        # FUNNEL METRIC ADDED
+        "revenue_per_item_view",                                             # FUNNEL METRIC ADDED
+        "revenue_per_purchase",                                              # FUNNEL METRIC ADDED
     ]
 
     try:
@@ -332,7 +674,47 @@ def get_top_products(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
-    return df[expected_columns]                                               # Return ordered, consistent columns
+    df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
+        df,
+        numerator_col="itemsAddedToCart",
+        denominator_col="itemsViewed",
+        target_col="view_to_cart_rate",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
+        df,
+        numerator_col="itemsCheckedOut",
+        denominator_col="itemsAddedToCart",
+        target_col="cart_to_checkout_rate",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
+        df,
+        numerator_col="itemsPurchased",
+        denominator_col="itemsCheckedOut",
+        target_col="checkout_to_purchase_rate",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
+        df,
+        numerator_col="itemsPurchased",
+        denominator_col="itemsViewed",
+        target_col="item_view_to_purchase_rate",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
+        df,
+        numerator_col="itemRevenue",
+        denominator_col="itemsViewed",
+        target_col="revenue_per_item_view",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
+        df,
+        numerator_col="itemRevenue",
+        denominator_col="itemsPurchased",
+        target_col="revenue_per_purchase",
+    )
+    # VERIFIED: 120 purchases / 600 item views = 0.20 (20%)
+
+    return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
+        df[expected_columns]                                                 # Return ordered, consistent columns
+    )
 
 
 # This report summarizes performance by geography.
@@ -346,7 +728,7 @@ def get_geographic_breakdown(
     Compatible: geographic dimensions with user/session metrics.
     """
 
-    expected_columns = [                                                      # Expected schema for consistent UI use
+    expected_columns = [                                                      # Expected schema for consistent UI use # MODIFIED
         "country",
         "city",
         "totalUsers",
@@ -355,6 +737,10 @@ def get_geographic_breakdown(
         "engagedSessions",
         "transactions",
         "purchaseRevenue",
+        "revenue_per_user",                                                  # DERIVED METRIC # ADDED
+        "revenue_per_session",                                               # DERIVED METRIC # ADDED
+        "sessions_per_user",                                                 # DERIVED METRIC # ADDED
+        "conversion_rate",                                                   # DERIVED METRIC # ADDED
     ]
 
     try:
@@ -386,7 +772,34 @@ def get_geographic_breakdown(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
-    return df[expected_columns]                                               # Return ordered, consistent columns
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per user # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="totalUsers",
+        target_col="revenue_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per session # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="sessions",
+        target_col="revenue_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - sessions per user # ADDED
+        df,
+        numerator_col="sessions",
+        denominator_col="totalUsers",
+        target_col="sessions_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - conversion rate # ADDED
+        df,
+        numerator_col="transactions",
+        denominator_col="sessions",
+        target_col="conversion_rate",
+    )
+
+    return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
+        df[expected_columns]                                                 # Return ordered, consistent columns
+    )
 
 
 # This report summarizes acquisition by session source and medium.
@@ -400,7 +813,7 @@ def get_user_acquisition(
     Compatible: session dimensions with user/session metrics.
     """
 
-    expected_columns = [                                                      # Expected schema for consistent UI use
+    expected_columns = [                                                      # Expected schema for consistent UI use # MODIFIED
         "sessionSource",
         "sessionMedium",
         "totalUsers",
@@ -408,8 +821,14 @@ def get_user_acquisition(
         "sessions",
         "engagedSessions",
         "userEngagementDuration",
+        "user_engagement_duration_per_user",                                # DURATION COLUMN ADDED
+        "user_engagement_duration_per_session",                             # DURATION COLUMN ADDED
         "transactions",
         "purchaseRevenue",
+        "revenue_per_user",                                                  # DERIVED METRIC # ADDED
+        "revenue_per_session",                                               # DERIVED METRIC # ADDED
+        "sessions_per_user",                                                 # DERIVED METRIC # ADDED
+        "conversion_rate",                                                   # DERIVED METRIC # ADDED
     ]
 
     try:
@@ -442,7 +861,46 @@ def get_user_acquisition(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
-    return df[expected_columns]                                               # Return ordered, consistent columns
+    df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
+        df,
+        seconds_col="userEngagementDuration",
+        users_col="totalUsers",
+        display_col="user_engagement_duration_per_user",
+    )
+    df = _add_duration_per_session_display(                                   # DURATION COLUMN ADDED
+        df,
+        seconds_col="userEngagementDuration",
+        sessions_col="sessions",
+        display_col="user_engagement_duration_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per user # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="totalUsers",
+        target_col="revenue_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per session # ADDED
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="sessions",
+        target_col="revenue_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - sessions per user # ADDED
+        df,
+        numerator_col="sessions",
+        denominator_col="totalUsers",
+        target_col="sessions_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - conversion rate # ADDED
+        df,
+        numerator_col="transactions",
+        denominator_col="sessions",
+        target_col="conversion_rate",
+    )
+
+    return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
+        df[expected_columns]                                                 # Return ordered, consistent columns
+    )
 
 
 # This report shows page performance by path and title.
@@ -456,7 +914,7 @@ def get_page_performance(
     Compatible: page dimensions with session/event metrics.
     """
 
-    expected_columns = [                                                      # Expected schema for consistent UI use
+    expected_columns = [                                                      # Expected schema for consistent UI use # MODIFIED
         "pagePath",
         "pageTitle",
         "screenPageViews",
@@ -492,7 +950,9 @@ def get_page_performance(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
-    return df[expected_columns]                                               # Return ordered, consistent columns
+    return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
+        df[expected_columns]                                                 # Return ordered, consistent columns
+    )
 
 
 # ============================================================================
@@ -588,110 +1048,3 @@ def get_all_core_reports(
 
     return registry                                                           # Return the full report registry
 
-
-# ============================================================================
-# Summary Statistics Helpers
-# ============================================================================
-# These helpers compute quick KPIs across the report bundle.
-
-# This function normalizes report structures into a dict of DataFrames.
-def _extract_report_frames(reports: dict) -> dict[str, pd.DataFrame]:
-    if not reports:
-        return {}                                                             # Return empty mapping when no reports exist
-
-    sample = next(iter(reports.values()))                                     # Peek at one report to detect structure
-    if isinstance(sample, dict) and "data" in sample:
-        return {key: value.get("data", pd.DataFrame()) for key, value in reports.items()}  # Return only DataFrames
-
-    return reports                                                            # Return input if it is already a DataFrame map
-
-
-# This function computes high-level summary metrics across reports.
-def get_summary_statistics(reports: dict) -> dict:
-    """
-    Calculate summary statistics across all reports.
-    """
-
-    report_frames = _extract_report_frames(reports)                           # Normalize input into DataFrames
-    traffic = report_frames.get("traffic_overview", pd.DataFrame())           # Preferred report for top-line metrics
-
-    if traffic.empty:
-        traffic = report_frames.get("daily_trends", pd.DataFrame())           # Fallback to daily trends if needed
-
-    if traffic.empty:
-        return {                                                              # Return zeros when no data is available
-            "total_users": 0,
-            "total_sessions": 0,
-            "total_revenue": 0.0,
-            "total_transactions": 0,
-            "conversion_rate": 0.0,
-            "revenue_per_user": 0.0,
-        }
-
-    total_users = int(traffic["totalUsers"].sum()) if "totalUsers" in traffic.columns else 0
-    total_sessions = int(traffic["sessions"].sum()) if "sessions" in traffic.columns else 0
-    total_revenue = float(traffic["purchaseRevenue"].sum()) if "purchaseRevenue" in traffic.columns else 0.0
-    total_transactions = int(traffic["transactions"].sum()) if "transactions" in traffic.columns else 0
-
-    return {
-        "total_users": total_users,                                          # Total users across the period
-        "total_sessions": total_sessions,                                    # Total sessions across the period
-        "total_revenue": total_revenue,                                      # Total purchase revenue
-        "total_transactions": total_transactions,                            # Total transactions/purchases
-        "conversion_rate": (
-            float(total_transactions / total_users * 100)
-            if total_users > 0 else 0.0
-        ),
-        "revenue_per_user": (
-            float(total_revenue / total_users)
-            if total_users > 0 else 0.0
-        ),
-    }
-
-
-# ============================================================================
-# GA4 Compatibility Notes
-# ============================================================================
-# This section summarizes the dimension/metric compatibility rules used above.
-
-"""
-KEY GA4 COMPATIBILITY RULES APPLIED:
-
-1. SESSION-SCOPED DIMENSIONS (compatible with most metrics):
-   - sessionSource, sessionMedium
-   - deviceCategory, browser, operatingSystem
-   - country, city
-   - landingPage, pagePath, pageTitle
-   - date
-
-   Works with: User metrics, session metrics, event metrics, revenue
-   Does NOT work with: Item-scoped metrics
-
-2. ITEM-SCOPED DIMENSIONS (limited compatibility):
-   - itemName, itemId, itemCategory, itemBrand
-
-   ONLY works with: Item-scoped metrics
-   Does NOT work with: User metrics, session metrics
-
-3. METRICS THAT WORK EVERYWHERE:
-   - totalUsers, activeUsers, newUsers
-   - sessions, engagedSessions
-   - userEngagementDuration
-   - transactions, purchaseRevenue
-   - screenPageViews, eventCount
-
-4. METRICS WITH RESTRICTIONS:
-   - averageSessionDuration: doesn't work with most dimensions
-   - Item metrics (itemsViewed, etc): ONLY with item dimensions
-
-5. SAFE COMBINATIONS USED:
-   - Session dimensions + User/Session/Revenue metrics
-   - Date + Any metrics
-   - Item dimensions + Item metrics ONLY
-   - Event metrics (addToCarts, checkouts) work with date
-
-6. AVOIDED COMBINATIONS:
-   - Item dimensions + Session metrics
-   - Session dimensions + Item metrics
-   - averageSessionDuration with multiple dimensions
-"""

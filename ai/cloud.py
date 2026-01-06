@@ -195,7 +195,7 @@ def analyze_selected_reports(
     client = anthropic.Anthropic(api_key=api_key)                             # Create Claude API client
     message = client.messages.create(
         model="claude-sonnet-4-20250514",                                     # Claude model selection
-        max_tokens=800,                                                       # Limit response length to control cost
+        max_tokens=4096,                                                       # Limit response length to control cost
         messages=[{                                                           # Single user message payload
             "role": "user",                                                   # Message role for Claude API
             "content": prompt,                                                # Prompt text sent to Claude
