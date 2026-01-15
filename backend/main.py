@@ -8,7 +8,6 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from google.analytics.admin_v1beta import AnalyticsAdminServiceClient
 from google.auth.transport.requests import Request as GoogleAuthRequest
@@ -333,22 +332,37 @@ def analyze(req: AnalyzeRequest) -> dict[str, Any]:
 
 
 _FRONTEND_DIST = os.getenv("FRONTEND_DIST")
-_STATIC_FILES = (
-    StaticFiles(directory=_FRONTEND_DIST, html=True) if _FRONTEND_DIST else None
-)
+
+
+def _resolve_static_path(path: str) -> str | None:
+    if not _FRONTEND_DIST:
+        return None
+    normalized = os.path.normpath(path.lstrip("/"))
+    candidate = os.path.abspath(os.path.join(_FRONTEND_DIST, normalized))
+    base = os.path.abspath(_FRONTEND_DIST)
+    if os.path.commonpath([candidate, base]) != base:
+        return None
+    if os.path.isfile(candidate):
+        return candidate
+    return None
 
 
 @app.get("/")
 def serve_index():
-    if not _STATIC_FILES or not _FRONTEND_DIST:
+    index_path = _resolve_static_path("index.html")
+    if not index_path:
         raise HTTPException(status_code=404)
-    return FileResponse(os.path.join(_FRONTEND_DIST, "index.html"))
+    return FileResponse(index_path)
 
 
 @app.get("/{path:path}")
-async def serve_static(path: str):
+def serve_static(path: str):
     if path.startswith("api/"):
         raise HTTPException(status_code=404)
-    if not _STATIC_FILES:
-        raise HTTPException(status_code=404)
-    return await _STATIC_FILES.get_response(path, {})
+    static_path = _resolve_static_path(path)
+    if static_path:
+        return FileResponse(static_path)
+    index_path = _resolve_static_path("index.html")
+    if index_path:
+        return FileResponse(index_path)
+    raise HTTPException(status_code=404)
