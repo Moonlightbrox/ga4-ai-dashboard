@@ -10,8 +10,7 @@ import {
 } from "../lib/api";
 
 export default function HomePage() {
-  const apiBase =
-    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
   const [startDate, setStartDate] = useState("2024-01-01");
   const [endDate, setEndDate] = useState("2024-01-31");
   const [reports, setReports] = useState<ReportPayload[]>([]);
