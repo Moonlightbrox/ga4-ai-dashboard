@@ -6,7 +6,7 @@ import os
 
 import anthropic
 
-from ai.prompts import (
+from backend.ai.prompts import (
     ANALYSIS_RULES_PROMPT,
     BUTTON_PROMPTS,
     REPORT_CONTEXT_LABEL,

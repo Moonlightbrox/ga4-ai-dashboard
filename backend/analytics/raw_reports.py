@@ -2,9 +2,9 @@
 # It also provides a registry and helpers so the UI can fetch consistent report data.
 
 import pandas as pd
-from data.ga4_service import fetch_ga4_report
-from data.preprocess import ga4_to_dataframe
-from components.format import format_duration, round_metric                 # MODIFIED
+from backend.data.ga4_service import fetch_ga4_report
+from backend.data.preprocess import ga4_to_dataframe
+from backend.components.format import format_duration, round_metric         # MODIFIED
 
 
 # ADDED
@@ -95,6 +95,7 @@ HUMAN_READABLE_COLUMNS = {                                                   # H
     "revenue_per_session": "Revenue per Session",
     "sessions_per_user": "Sessions per User",
     "conversion_rate": "Conversion Rate",
+    "active_user_ratio": "Active User Ratio",
     "country": "Country",
     "city": "City",
     "deviceCategory": "Device Category",
@@ -903,6 +904,123 @@ def get_user_acquisition(
     )
 
 
+# This report evaluates acquisition efficiency by source and medium.
+def get_test_acquisition_efficiency(
+    start_date: str,                                                          # GA4 start date for the report
+    end_date: str,                                                            # GA4 end date for the report
+) -> pd.DataFrame:
+    """
+    Experimental acquisition efficiency report.
+
+    Compatible: session dimensions with user/session metrics.
+    """
+
+    expected_columns = [                                                      # Expected schema for consistent UI use
+        "sessionSource",
+        "sessionMedium",
+        "totalUsers",
+        "activeUsers",
+        "newUsers",
+        "sessions",
+        "engagedSessions",
+        "userEngagementDuration",
+        "user_engagement_duration_per_user",                                # DURATION COLUMN ADDED
+        "user_engagement_duration_per_session",                             # DURATION COLUMN ADDED
+        "transactions",
+        "purchaseRevenue",
+        "sessions_per_user",                                                 # DERIVED METRIC
+        "conversion_rate",                                                   # DERIVED METRIC
+        "revenue_per_user",                                                  # DERIVED METRIC
+        "revenue_per_session",                                               # DERIVED METRIC
+        "revenue_per_transaction",                                           # DERIVED METRIC
+        "active_user_ratio",                                                 # DERIVED METRIC
+    ]
+
+    try:
+        response = fetch_ga4_report(
+            start_date=start_date,                                            # Date range start
+            end_date=end_date,                                                # Date range end
+            metrics=[
+                "totalUsers",
+                "activeUsers",
+                "newUsers",
+                "sessions",
+                "engagedSessions",
+                "userEngagementDuration",
+                "transactions",
+                "purchaseRevenue",
+            ],
+            dimensions=[
+                "sessionSource",
+                "sessionMedium",
+            ],
+        )
+    except Exception as e:                                                    # Handle GA4 API errors to keep UI stable
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
+    df = ga4_to_dataframe(response)                                           # Convert GA4 response to DataFrame
+
+    if df.empty:
+        return pd.DataFrame(columns=expected_columns)                         # Return empty table with expected columns
+
+    for col in expected_columns:
+        if col not in df.columns:
+            df[col] = 0                                                       # Fill missing columns to keep schema stable
+
+    df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
+        df,
+        seconds_col="userEngagementDuration",
+        users_col="totalUsers",
+        display_col="user_engagement_duration_per_user",
+    )
+    df = _add_duration_per_session_display(                                   # DURATION COLUMN ADDED
+        df,
+        seconds_col="userEngagementDuration",
+        sessions_col="sessions",
+        display_col="user_engagement_duration_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - sessions per user
+        df,
+        numerator_col="sessions",
+        denominator_col="totalUsers",
+        target_col="sessions_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - conversion rate
+        df,
+        numerator_col="transactions",
+        denominator_col="sessions",
+        target_col="conversion_rate",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per user
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="totalUsers",
+        target_col="revenue_per_user",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per session
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="sessions",
+        target_col="revenue_per_session",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per transaction
+        df,
+        numerator_col="purchaseRevenue",
+        denominator_col="transactions",
+        target_col="revenue_per_transaction",
+    )
+    df = _add_ratio_metric(                                                   # DERIVED METRIC - active user ratio
+        df,
+        numerator_col="activeUsers",
+        denominator_col="totalUsers",
+        target_col="active_user_ratio",
+    )
+
+    return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
+        df[expected_columns]                                                 # Return ordered, consistent columns
+    )
+
+
 # This report shows page performance by path and title.
 def get_page_performance(
     start_date: str,                                                          # GA4 start date for the report
@@ -1010,6 +1128,12 @@ CORE_REPORTS = [                                                              # 
         "fn": get_user_acquisition,                                          # Function that builds this report
     },
     {
+        "id": "test_acquisition_efficiency",
+        "name": "Test Acquisition Efficiency",
+        "description": "Experimental efficiency metrics by source and medium.",
+        "fn": get_test_acquisition_efficiency,                               # Function that builds this report
+    },
+    {
         "id": "page_performance",
         "name": "Page Performance",
         "description": "Page views, sessions, and engagement by page path and title.",
@@ -1047,4 +1171,3 @@ def get_all_core_reports(
         }
 
     return registry                                                           # Return the full report registry
-

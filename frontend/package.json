@@ -1,0 +1,19 @@
+{
+  "name": "ga4-ai-frontend",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "14.2.35",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.8",
+    "@types/react": "19.2.8",
+    "typescript": "5.9.3"
+  }
+}

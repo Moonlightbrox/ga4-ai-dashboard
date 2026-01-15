@@ -2,11 +2,14 @@
 # It validates inputs, builds GA4 request objects, and returns raw responses.
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import List
 
 from dotenv import load_dotenv
 
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
+from google.auth.credentials import Credentials
 from google.analytics.data_v1beta.types import (
     DateRange,
     Dimension,
@@ -19,13 +22,35 @@ from google.analytics.data_v1beta.types import (
 # ============================================================================
 # Environment and Client Setup
 # ============================================================================
-# This section loads configuration and creates the GA4 API client once.
+# This section loads configuration and prepares request context helpers.
 
-load_dotenv()                                                                # Load environment variables from .env
+ENV_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(dotenv_path=ENV_PATH)                                           # Load environment variables from backend/.env
 
 PROPERTY_ID = os.getenv("GA_PROPERTY_ID")                                   # GA4 property ID (numbers only)
 
-_client = BetaAnalyticsDataClient()                                          # Reusable GA4 API client
+_CURRENT_PROPERTY_ID = ContextVar("ga4_property_id", default=None)
+_CURRENT_CREDENTIALS = ContextVar("ga4_credentials", default=None)
+
+
+@contextmanager
+def ga4_request_context(
+    property_id: str | None = None,
+    credentials: Credentials | None = None,
+):
+    token_property = _CURRENT_PROPERTY_ID.set(property_id)
+    token_credentials = _CURRENT_CREDENTIALS.set(credentials)
+    try:
+        yield
+    finally:
+        _CURRENT_PROPERTY_ID.reset(token_property)
+        _CURRENT_CREDENTIALS.reset(token_credentials)
+
+
+def _build_client(credentials: Credentials | None = None) -> BetaAnalyticsDataClient:
+    if credentials is None:
+        return BetaAnalyticsDataClient()
+    return BetaAnalyticsDataClient(credentials=credentials)
 
 
 # ============================================================================
@@ -40,12 +65,17 @@ def fetch_ga4_report(
     metrics: List[str] | None = None,                                         # GA4 metric names to request
     dimensions: List[str] | None = None,                                      # GA4 dimension names to request
     dimension_filter: FilterExpression | None = None,                         # Optional GA4 dimension filter
+    property_id: str | None = None,                                           # Optional GA4 property override
+    credentials: Credentials | None = None,                                  # Optional user credentials
 ):
 
     # ------------------------------------------------------------------
     # Safety checks
     # ------------------------------------------------------------------
-    if not PROPERTY_ID:
+    resolved_property_id = property_id or _CURRENT_PROPERTY_ID.get() or PROPERTY_ID
+    resolved_credentials = credentials or _CURRENT_CREDENTIALS.get()
+
+    if not resolved_property_id:
         raise ValueError("GA_PROPERTY_ID is not set in environment variables")
 
     if not metrics:
@@ -71,7 +101,7 @@ def fetch_ga4_report(
     # Build GA4 API request
     # ------------------------------------------------------------------
     request = RunReportRequest(
-        property=f"properties/{PROPERTY_ID}",                                 # GA4 property to query
+        property=f"properties/{resolved_property_id}",                         # GA4 property to query
         date_ranges=[
             DateRange(
                 start_date=start_date,                                       # Start of query window
@@ -87,4 +117,5 @@ def fetch_ga4_report(
     # ------------------------------------------------------------------
     # Execute request and return raw response
     # ------------------------------------------------------------------
-    return _client.run_report(request)                                       # Return GA4 RunReportResponse
+    client = _build_client(resolved_credentials)
+    return client.run_report(request)                                        # Return GA4 RunReportResponse

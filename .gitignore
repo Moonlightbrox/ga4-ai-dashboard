@@ -1,7 +1,9 @@
 # secrets
 .env
+.env.local
+backend/.env
+frontend/.env.local
 credentials.json
-*.json
 
 # python
 .venv/
@@ -11,11 +13,14 @@ __pycache__/
 # streamlit
 .streamlit/
 
+# frontend
+node_modules/
+.next/
+
 # OS
 .DS_Store
 Thumbs.db
 
 # test files
-scripts/
 run.bat
 notes/

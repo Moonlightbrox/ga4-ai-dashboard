@@ -24,6 +24,7 @@ RATIO_COLUMNS = {
     "View -> Item View Conversion Rate",
     "Item View -> Cart Conversion Rate",
     "Revenue per Transaction",
+    "Active User Ratio",
     "revenue_per_user",
     "revenue_per_active_user",
     "revenue_per_session",
@@ -38,6 +39,7 @@ RATIO_COLUMNS = {
     "pageview_to_item_view_rate",
     "item_view_to_cart_rate",
     "revenue_per_transaction",
+    "active_user_ratio",
 }
 
 
