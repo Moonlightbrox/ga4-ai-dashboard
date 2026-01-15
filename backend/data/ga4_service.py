@@ -25,9 +25,9 @@ from google.analytics.data_v1beta.types import (
 # This section loads configuration and prepares request context helpers.
 
 ENV_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
-load_dotenv(dotenv_path=ENV_PATH)                                           # Load environment variables from backend/.env
+load_dotenv(dotenv_path=ENV_PATH)                                          
 
-PROPERTY_ID = os.getenv("GA_PROPERTY_ID")                                   # GA4 property ID (numbers only)
+
 
 _CURRENT_PROPERTY_ID = ContextVar("ga4_property_id", default=None)
 _CURRENT_CREDENTIALS = ContextVar("ga4_credentials", default=None)
@@ -72,7 +72,7 @@ def fetch_ga4_report(
     # ------------------------------------------------------------------
     # Safety checks
     # ------------------------------------------------------------------
-    resolved_property_id = property_id or _CURRENT_PROPERTY_ID.get() or PROPERTY_ID
+    resolved_property_id = property_id or _CURRENT_PROPERTY_ID.get() 
     resolved_credentials = credentials or _CURRENT_CREDENTIALS.get()
 
     if not resolved_property_id:
