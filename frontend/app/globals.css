@@ -74,6 +74,10 @@ select {
   font-size: 0.95rem;
 }
 
+select[multiple] {
+  min-height: 160px;
+}
+
 button {
   border: none;
   border-radius: 999px;
@@ -99,6 +103,98 @@ button:disabled {
 
 .report-item:last-child {
   border-bottom: none;
+}
+
+.report-select-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.report-select-item {
+  display: grid;
+  grid-template-columns: 18px minmax(160px, 220px) 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.report-select-item:last-child {
+  border-bottom: none;
+}
+
+.report-select-name {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.report-select-desc {
+  color: var(--muted);
+}
+
+.custom-report-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.custom-report-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin: 0;
+}
+
+.custom-report-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.form-error {
+  color: #b42318;
+  margin: 0;
+}
+
+.form-success {
+  color: #147a2b;
+  margin: 0;
+}
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.prompt-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.prompt-button {
+  background: #1b1b1b;
+}
+
+.chat-input {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin: 0;
+}
+
+.chat-input textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+}
+
+.chat-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .answer {
