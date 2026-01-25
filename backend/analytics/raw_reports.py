@@ -26,6 +26,18 @@ def _add_ratio_metric(
 
 
 # ADDED
+def _round_columns(
+    df: pd.DataFrame,
+    columns: list[str],
+    decimals: int = 2,
+) -> pd.DataFrame:
+    for col in columns:
+        if col in df.columns:
+            df[col] = round_metric(df[col], decimals=decimals)
+    return df
+
+
+# ADDED
 def _add_duration_per_user_display(
     df: pd.DataFrame,
     seconds_col: str,
@@ -113,6 +125,13 @@ HUMAN_READABLE_COLUMNS = {                                                   # H
 
 
 # ADDED
+REVENUE_COLUMNS = [
+    "purchaseRevenue",
+    "itemRevenue",
+]
+
+
+# ADDED
 def _apply_human_readable_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df.rename(columns=HUMAN_READABLE_COLUMNS)                          # HUMAN-READABLE COLUMN # ADDED
 
@@ -188,6 +207,7 @@ def get_traffic_overview(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
+
     df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
         df,
         seconds_col="userEngagementDuration",
@@ -230,6 +250,8 @@ def get_traffic_overview(
         denominator_col="sessions",
         target_col="conversion_rate",
     )
+
+    df = _round_columns(df, REVENUE_COLUMNS)
 
     return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
         df[expected_columns]                                                 # Return ordered, consistent columns
@@ -293,6 +315,7 @@ def get_daily_trends(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
+
     df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
         df,
         seconds_col="userEngagementDuration",
@@ -329,6 +352,8 @@ def get_daily_trends(
         denominator_col="sessions",
         target_col="conversion_rate",
     )
+
+    df = _round_columns(df, REVENUE_COLUMNS)
 
     return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
         df[expected_columns]                                                 # Return ordered, consistent columns
@@ -388,6 +413,7 @@ def get_landing_pages(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
+
     df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
         df,
         seconds_col="userEngagementDuration",
@@ -424,6 +450,8 @@ def get_landing_pages(
         denominator_col="sessions",
         target_col="conversion_rate",
     )
+
+    df = _round_columns(df, REVENUE_COLUMNS)
 
     return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
         df[expected_columns]                                                 # Return ordered, consistent columns
@@ -489,6 +517,7 @@ def get_device_performance(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
+
     df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
         df,
         seconds_col="userEngagementDuration",
@@ -525,6 +554,8 @@ def get_device_performance(
         denominator_col="sessions",
         target_col="conversion_rate",
     )
+
+    df = _round_columns(df, REVENUE_COLUMNS)
 
     return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
         df[expected_columns]                                                 # Return ordered, consistent columns
@@ -583,6 +614,7 @@ def get_ecommerce_funnel(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
+
     df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
         df,
         numerator_col="itemViewEvents",
@@ -614,6 +646,8 @@ def get_ecommerce_funnel(
         target_col="revenue_per_transaction",
     )
     # VERIFIED: 120 purchases / 600 item views = 0.20 (20%)
+
+    df = _round_columns(df, REVENUE_COLUMNS)
 
     return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
         df[expected_columns]                                                 # Return ordered, consistent columns
@@ -675,6 +709,7 @@ def get_top_products(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
+
     df = _add_ratio_metric(                                                   # DERIVED METRIC # FUNNEL METRIC ADDED
         df,
         numerator_col="itemsAddedToCart",
@@ -712,6 +747,8 @@ def get_top_products(
         target_col="revenue_per_purchase",
     )
     # VERIFIED: 120 purchases / 600 item views = 0.20 (20%)
+
+    df = _round_columns(df, REVENUE_COLUMNS)
 
     return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
         df[expected_columns]                                                 # Return ordered, consistent columns
@@ -773,6 +810,7 @@ def get_geographic_breakdown(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
+
     df = _add_ratio_metric(                                                   # DERIVED METRIC - revenue per user # ADDED
         df,
         numerator_col="purchaseRevenue",
@@ -797,6 +835,8 @@ def get_geographic_breakdown(
         denominator_col="sessions",
         target_col="conversion_rate",
     )
+
+    df = _round_columns(df, REVENUE_COLUMNS)
 
     return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
         df[expected_columns]                                                 # Return ordered, consistent columns
@@ -862,6 +902,7 @@ def get_user_acquisition(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
+
     df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
         df,
         seconds_col="userEngagementDuration",
@@ -898,6 +939,8 @@ def get_user_acquisition(
         denominator_col="sessions",
         target_col="conversion_rate",
     )
+
+    df = _round_columns(df, REVENUE_COLUMNS)
 
     return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
         df[expected_columns]                                                 # Return ordered, consistent columns
@@ -967,6 +1010,7 @@ def get_test_acquisition_efficiency(
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
+
     df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
         df,
         seconds_col="userEngagementDuration",
@@ -1015,6 +1059,8 @@ def get_test_acquisition_efficiency(
         denominator_col="totalUsers",
         target_col="active_user_ratio",
     )
+
+    df = _round_columns(df, REVENUE_COLUMNS)
 
     return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
         df[expected_columns]                                                 # Return ordered, consistent columns
@@ -1067,6 +1113,9 @@ def get_page_performance(
     for col in expected_columns:
         if col not in df.columns:
             df[col] = 0                                                       # Fill missing columns to keep schema stable
+
+
+    df = _round_columns(df, REVENUE_COLUMNS)
 
     return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
         df[expected_columns]                                                 # Return ordered, consistent columns

@@ -304,6 +304,47 @@ button:disabled {
   vertical-align: top;
 }
 
+.landing-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.landing-metric-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.landing-metric-card h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.report-sort-button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.report-sort-button:hover {
+  color: var(--accent);
+}
+
+.report-sort-indicator {
+  display: inline-block;
+  min-width: 12px;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
 .report-overlay {
   position: fixed;
   inset: 0;

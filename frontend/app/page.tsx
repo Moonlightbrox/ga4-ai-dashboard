@@ -2,7 +2,7 @@
 // report loading, report selection, and the AI Q&A interface that uses those reports.
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   fetchAuthStatus,
   fetchCoreReports,
@@ -58,6 +58,7 @@ export default function HomePage() {
   const [customReportError, setCustomReportError] = useState<string | null>(null); // Error message for custom report creation.
   const [customReportSuccess, setCustomReportSuccess] = useState<string | null>(null); // Success message for custom report creation.
   const [isCreatingReport, setIsCreatingReport] = useState(false);            // Whether a custom report request is in flight.
+  const [coveragePct, setCoveragePct] = useState(90);                          // Percent of rows to include in AI prompts.
 
   const promptButtons = [                                                     // Prebuilt prompt options mapped to backend.
     { key: "traffic_quality_assessment", label: "Traffic quality assessment" },
@@ -161,7 +162,7 @@ export default function HomePage() {
       const result = await runAnalysis({                                      // AI analysis response for the question.
         selected_reports: visibleReports,
         user_question: question.trim(),
-        coverage_pct: 90,
+        coverage_pct: coveragePct,
       });
       setAnswer(result.answer);                                               // Store the AI response for display.
     } catch (err) {                                                           // Handle AI request errors from backend.
@@ -185,7 +186,7 @@ export default function HomePage() {
         selected_reports: visibleReports,
         user_question: label,
         prompt_key: promptKey,
-        coverage_pct: 90,
+        coverage_pct: coveragePct,
       });
       setAnswer(result.answer);                                               // Store the AI response for display.
     } catch (err) {                                                           // Handle AI request errors from backend.
@@ -256,6 +257,8 @@ export default function HomePage() {
     return `${item.label} - ${item.description} (${item.id})`;                // Return combined label for display.
   }
 
+  const clampCoverage = (value: number) => Math.min(100, Math.max(1, value));
+
   return (                                                                   // Render the main dashboard layout.
     <main>
       <h1>GA4 AI Analytics Platform</h1>
@@ -309,6 +312,19 @@ export default function HomePage() {
             type="date"
             value={endDate}
             onChange={(event) => setEndDate(event.target.value)}
+          />
+        </label>
+        <label>
+          AI data coverage (%)
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={coveragePct}
+            onChange={(event) => {
+              const nextValue = Number(event.target.value);
+              setCoveragePct(Number.isNaN(nextValue) ? 1 : clampCoverage(nextValue));
+            }}
           />
         </label>
         <button onClick={handleLoadReports}>Load reports</button>
@@ -409,6 +425,13 @@ export default function HomePage() {
         ) : (
           <ReportsContainer reports={visibleReports} />
         )}
+      </section>
+
+      <section>
+        <h2>Landing pages</h2>
+        <LandingPageHighlights
+          report={reports.find((report) => report.id === "landing_pages")}
+        />
       </section>
 
       <section>
@@ -597,6 +620,46 @@ type ReportPanelProps = {
   isFullscreen?: boolean;                                                     // Whether the panel is in fullscreen mode.
 };
 
+type SortDirection = "asc" | "desc";
+
+const parseMaybeNumber = (value: unknown) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.replace(/,/g, "").trim();
+    if (!normalized) {
+      return null;
+    }
+    const parsed = Number(normalized);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+};
+
+const compareValues = (a: unknown, b: unknown) => {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+
+  const aNum = parseMaybeNumber(a);
+  const bNum = parseMaybeNumber(b);
+  if (aNum != null && bNum != null) {
+    return aNum - bNum;
+  }
+
+  return String(a).localeCompare(String(b), undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+};
+
+const pickFirstKey = (rows: ReportPayload["data"], candidates: string[]) => {
+  if (!rows.length) return null;
+  const keys = new Set(Object.keys(rows[0] ?? {}));
+  return candidates.find((key) => keys.has(key)) ?? null;
+};
+
 // Renders a single report panel with actions and a data table.
 function ReportPanel({
   report,                                                                     // Report payload providing labels and data.
@@ -608,6 +671,36 @@ function ReportPanel({
 }: ReportPanelProps) {
   const rows = report.data;                                                   // Data rows for the report table.
   const columns = rows.length ? Object.keys(rows[0]) : [];                    // Column labels derived from row keys.
+  const [sortConfig, setSortConfig] = useState<{
+    key: string;
+    direction: SortDirection;
+  } | null>(null);
+
+  const sortedRows = useMemo(() => {
+    if (!sortConfig) return rows;
+    const multiplier = sortConfig.direction === "asc" ? 1 : -1;
+    const rowsWithIndex = rows.map((row, index) => ({ row, index }));
+    rowsWithIndex.sort((left, right) => {
+      const order = compareValues(left.row[sortConfig.key], right.row[sortConfig.key]);
+      if (order !== 0) {
+        return order * multiplier;
+      }
+      return left.index - right.index;
+    });
+    return rowsWithIndex.map((item) => item.row);
+  }, [rows, sortConfig]);
+
+  const handleSort = (column: string) => {
+    setSortConfig((prev) => {
+      if (prev?.key === column) {
+        return {
+          key: column,
+          direction: prev.direction === "asc" ? "desc" : "asc",
+        };
+      }
+      return { key: column, direction: "asc" };
+    });
+  };
 
   return (                                                                   // Render the report card UI and table.
     <div className={isFullscreen ? "report-block report-block-fullscreen" : "report-block"}>
@@ -656,13 +749,27 @@ function ReportPanel({
           <table className="report-table">
             <thead>
               <tr>
-                {columns.map((col) => (
-                  <th key={col}>{col}</th>
-                ))}
+                {columns.map((col) => {
+                  const isSorted = sortConfig?.key === col;
+                  const direction = isSorted ? sortConfig?.direction : null;
+                  const indicator = direction === "asc" ? "^" : direction === "desc" ? "v" : "";
+                  return (
+                    <th key={col} aria-sort={direction ? (direction === "asc" ? "ascending" : "descending") : "none"}>
+                      <button
+                        type="button"
+                        className="report-sort-button"
+                        onClick={() => handleSort(col)}
+                      >
+                        <span className="report-sort-label">{col}</span>
+                        <span className="report-sort-indicator">{indicator}</span>
+                      </button>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, idx) => (
+              {sortedRows.map((row, idx) => (
                 <tr key={`${report.id}-${idx}`}>
                   {columns.map((col) => (
                     <td key={`${report.id}-${idx}-${col}`}>
@@ -675,6 +782,135 @@ function ReportPanel({
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+type LandingMetricBlock = {
+  title: string;
+  rows: { label: string; value: string }[];
+};
+
+function LandingPageHighlights({ report }: { report?: ReportPayload }) {
+  if (!report) {
+    return <p>Load reports to view landing page highlights.</p>;
+  }
+  if (!report.data?.length) {
+    return <p>No landing page data available.</p>;
+  }
+
+  const pageKey = pickFirstKey(report.data, [
+    "Landing Page",
+    "landingPage",
+    "Page",
+    "page",
+  ]);
+  const revenueKey = pickFirstKey(report.data, [
+    "Purchase Revenue",
+    "purchaseRevenue",
+    "Revenue",
+    "revenue",
+  ]);
+  const revenuePerSessionKey = pickFirstKey(report.data, [
+    "Revenue per Session",
+    "revenue_per_session",
+  ]);
+
+  if (!pageKey || !revenueKey || !revenuePerSessionKey) {
+    return (
+      <p>
+        Landing page metrics require page, revenue, and revenue per session fields.
+      </p>
+    );
+  }
+
+  const buildRankedRows = (
+    valueKey: string,
+    direction: "asc" | "desc",
+    limit: number,
+    excludeZero: boolean
+  ) => {
+    const ranked = report.data
+      .map((row) => ({
+        label: String(row[pageKey] ?? ""),
+        rawValue: row[valueKey],
+        numericValue: parseMaybeNumber(row[valueKey]),
+      }))
+      .filter((row) => row.label.trim().length > 0)
+      .filter((row) => {
+        if (!excludeZero) return true;
+        if (row.numericValue == null) return true;
+        return row.numericValue !== 0;
+      })
+      .sort((a, b) => {
+        const order = compareValues(a.rawValue, b.rawValue);
+        return direction === "asc" ? order : -order;
+      })
+      .slice(0, limit)
+      .map((row) => ({
+        label: row.label,
+        value: String(row.rawValue ?? ""),
+      }));
+
+    return ranked;
+  };
+
+  const blocks: LandingMetricBlock[] = [
+    {
+      title: "Top 5 revenue pages",
+      rows: buildRankedRows(revenueKey, "desc", 5, false),
+    },
+    {
+      title: "Top 5 revenue per session pages",
+      rows: buildRankedRows(revenuePerSessionKey, "desc", 5, false),
+    },
+    {
+      title: "Bottom 5 revenue pages",
+      rows: buildRankedRows(revenueKey, "asc", 5, true),
+    },
+    {
+      title: "Bottom 5 revenue per session pages",
+      rows: buildRankedRows(revenuePerSessionKey, "asc", 5, true),
+    },
+  ];
+
+  return (
+    <div className="report-block">
+      <div className="report-title">
+        <div className="report-title-row">
+          <strong>Landing page highlights</strong>
+        </div>
+        <span>Computed from the landing pages report.</span>
+      </div>
+      <div className="report-table-wrap">
+        <div className="landing-metric-grid">
+          {blocks.map((block) => (
+            <div key={block.title} className="landing-metric-card">
+              <h3>{block.title}</h3>
+              {block.rows.length === 0 ? (
+                <p>No rows available.</p>
+              ) : (
+                <table className="report-table">
+                  <thead>
+                    <tr>
+                      <th>Page</th>
+                      <th>Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {block.rows.map((row, idx) => (
+                      <tr key={`${block.title}-${idx}`}>
+                        <td>{row.label}</td>
+                        <td>{row.value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
