@@ -58,7 +58,6 @@ export default function HomePage() {
   const [customReportError, setCustomReportError] = useState<string | null>(null); // Error message for custom report creation.
   const [customReportSuccess, setCustomReportSuccess] = useState<string | null>(null); // Success message for custom report creation.
   const [isCreatingReport, setIsCreatingReport] = useState(false);            // Whether a custom report request is in flight.
-  const [coveragePct, setCoveragePct] = useState(90);                          // Percent of rows to include in AI prompts.
 
   const promptButtons = [                                                     // Prebuilt prompt options mapped to backend.
     { key: "traffic_quality_assessment", label: "Traffic quality assessment" },
@@ -162,7 +161,6 @@ export default function HomePage() {
       const result = await runAnalysis({                                      // AI analysis response for the question.
         selected_reports: visibleReports,
         user_question: question.trim(),
-        coverage_pct: coveragePct,
       });
       setAnswer(result.answer);                                               // Store the AI response for display.
     } catch (err) {                                                           // Handle AI request errors from backend.
@@ -186,7 +184,6 @@ export default function HomePage() {
         selected_reports: visibleReports,
         user_question: label,
         prompt_key: promptKey,
-        coverage_pct: coveragePct,
       });
       setAnswer(result.answer);                                               // Store the AI response for display.
     } catch (err) {                                                           // Handle AI request errors from backend.
@@ -257,7 +254,6 @@ export default function HomePage() {
     return `${item.label} - ${item.description} (${item.id})`;                // Return combined label for display.
   }
 
-  const clampCoverage = (value: number) => Math.min(100, Math.max(1, value));
 
   return (                                                                   // Render the main dashboard layout.
     <main>
@@ -312,19 +308,6 @@ export default function HomePage() {
             type="date"
             value={endDate}
             onChange={(event) => setEndDate(event.target.value)}
-          />
-        </label>
-        <label>
-          AI data coverage (%)
-          <input
-            type="number"
-            min={1}
-            max={100}
-            value={coveragePct}
-            onChange={(event) => {
-              const nextValue = Number(event.target.value);
-              setCoveragePct(Number.isNaN(nextValue) ? 1 : clampCoverage(nextValue));
-            }}
           />
         </label>
         <button onClick={handleLoadReports}>Load reports</button>
@@ -469,7 +452,7 @@ export default function HomePage() {
                 {isAsking ? "Asking..." : "Ask AI"}
               </button>
             </div>
-            {answer && <div className="answer">{answer}</div>}
+            {answer && <AnswerRenderer answer={answer} />}
           </div>
         )}
       </section>
@@ -912,5 +895,234 @@ function LandingPageHighlights({ report }: { report?: ReportPayload }) {
         </div>
       </div>
     </div>
+  );
+}
+
+type AnswerBlock =
+  | { type: "heading"; text: string }
+  | { type: "paragraph"; text: string }
+  | { type: "list"; items: string[] }
+  | { type: "table"; headers: string[]; rows: string[][] };
+
+function parseTableRow(line: string) {
+  const trimmed = line.trim();
+  const normalized = trimmed.startsWith("|") ? trimmed.slice(1) : trimmed;
+  const withoutEdge = normalized.endsWith("|") ? normalized.slice(0, -1) : normalized;
+  return withoutEdge.split("|").map((cell) => cell.trim());
+}
+
+function isTableSeparator(line: string) {
+  return /^\s*\|?[-:\s|]+\|?\s*$/.test(line);
+}
+
+function parseAnswerBlocks(answer: string): AnswerBlock[] {
+  const lines = answer.split(/\r?\n/);
+  const blocks: AnswerBlock[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i].trimEnd();
+    const trimmed = line.trim();
+    if (!trimmed) {
+      i += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith("##")) {
+      blocks.push({
+        type: "heading",
+        text: trimmed.replace(/^#+\s*/, ""),
+      });
+      i += 1;
+      continue;
+    }
+
+    const next = lines[i + 1]?.trim() ?? "";
+    if (trimmed.includes("|") && isTableSeparator(next)) {
+      const headers = parseTableRow(trimmed);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].trim()) {
+        rows.push(parseTableRow(lines[i]));
+        i += 1;
+      }
+      blocks.push({ type: "table", headers, rows });
+      continue;
+    }
+
+    if (trimmed.startsWith("- ") || trimmed.startsWith("•")) {
+      const items: string[] = [];
+      while (i < lines.length) {
+        const itemLine = lines[i].trim();
+        if (!itemLine.startsWith("- ") && !itemLine.startsWith("•")) break;
+        const parts = itemLine
+          .split(/\s+-\s+|\s+•\s+|•/)
+          .map((part) => part.replace(/^[-•]\s*/, "").trim())
+          .filter(Boolean);
+        items.push(...parts);
+        i += 1;
+      }
+      blocks.push({ type: "list", items });
+      continue;
+    }
+
+    if (trimmed.includes("•")) {
+      const items = trimmed
+        .split(/\s+•\s+|•/)
+        .map((part) => part.replace(/^[-•]\s*/, "").trim())
+        .filter(Boolean);
+      if (items.length > 1) {
+        blocks.push({ type: "list", items });
+        i += 1;
+        continue;
+      }
+    }
+
+    const paragraphLines: string[] = [];
+    while (i < lines.length) {
+      const paraLine = lines[i].trim();
+      if (!paraLine) break;
+      if (paraLine.startsWith("##")) break;
+      const lookahead = lines[i + 1]?.trim() ?? "";
+      if (paraLine.includes("|") && isTableSeparator(lookahead)) break;
+      if (paraLine.startsWith("- ")) break;
+      paragraphLines.push(paraLine);
+      i += 1;
+    }
+    blocks.push({ type: "paragraph", text: paragraphLines.join(" ") });
+  }
+
+  return blocks;
+}
+
+function AnswerRenderer({ answer }: { answer: string }) {
+  const blocks = useMemo(() => parseAnswerBlocks(answer), [answer]);
+  return (
+    <div className="answer">
+      {blocks.map((block, index) => {
+        if (block.type === "heading") {
+          return (
+            <h3 key={`answer-heading-${index}`} className="answer-heading">
+              {block.text}
+            </h3>
+          );
+        }
+        if (block.type === "table") {
+          const columnMaxes = block.headers.map((_, colIdx) => {
+            let max = 0;
+            block.rows.forEach((row) => {
+              const value = parseAnswerNumber(row[colIdx]);
+              if (value !== null && value > max) {
+                max = value;
+              }
+            });
+            return max;
+          });
+          return (
+            <div key={`answer-table-${index}`} className="answer-table-wrap">
+              <table className="answer-table">
+                <thead>
+                  <tr>
+                    {block.headers.map((header, idx) => (
+                      <th key={`answer-head-${index}-${idx}`}>{header}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.rows.map((row, rowIdx) => (
+                    <tr key={`answer-row-${index}-${rowIdx}`}>
+                      {row.map((cell, cellIdx) => (
+                        <AnswerCell
+                          key={`answer-cell-${index}-${rowIdx}-${cellIdx}`}
+                          value={cell}
+                          columnName={block.headers[cellIdx]}
+                          maxValue={columnMaxes[cellIdx]}
+                        />
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        if (block.type === "list") {
+          return (
+            <ul key={`answer-list-${index}`} className="answer-list">
+              {block.items.map((item, itemIdx) => (
+                <li key={`answer-item-${index}-${itemIdx}`}>{item}</li>
+              ))}
+            </ul>
+          );
+        }
+        return (
+          <p key={`answer-paragraph-${index}`} className="answer-paragraph">
+            {block.text}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function parseAnswerNumber(raw: string) {
+  if (!raw) return null;
+  const duration = parseDurationToSeconds(raw);
+  if (duration !== null) {
+    return duration;
+  }
+  const normalized = raw
+    .replace(/[%,$]/g, "")
+    .replace(/\s+/g, "")
+    .replace(/,/g, "");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseDurationToSeconds(raw: string) {
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3] ?? 0);
+  if ([hours, minutes, seconds].some((value) => Number.isNaN(value))) return null;
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+function columnKind(name: string) {
+  const lower = name.toLowerCase();
+  if (lower.includes("revenue")) return "revenue";
+  if (lower.includes("conversion")) return "conversion";
+  if (lower.includes("bounce")) return "bounce";
+  if (lower.includes("session length")) return "session-length";
+  if (lower.includes("session")) return "sessions";
+  if (lower.includes("user")) return "users";
+  return "generic";
+}
+
+function AnswerCell({
+  value,
+  columnName,
+  maxValue,
+}: {
+  value: string;
+  columnName: string;
+  maxValue: number;
+}) {
+  const numericValue = parseAnswerNumber(value);
+  const ratio = maxValue > 0 && numericValue !== null ? Math.min(numericValue / maxValue, 1) : 0;
+  const kind = columnKind(columnName);
+  const showBar = numericValue !== null;
+  return (
+    <td className={showBar ? "answer-bar-cell" : undefined}>
+      {showBar ? (
+        <div className={`answer-bar answer-bar-${kind}`} style={{ ["--fill" as never]: ratio }}>
+          <span>{value}</span>
+        </div>
+      ) : (
+        value
+      )}
+    </td>
   );
 }

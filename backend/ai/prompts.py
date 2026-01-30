@@ -11,18 +11,34 @@ SYSTEM_ROLE_PROMPT = (                                                       # S
     "You are a data-grounded analytics assistant."
 )
 
+AGENT_SYSTEM_PROMPT = (                                                      # System prompt for the SQL agent
+    "SYSTEM ROLE:\n"
+    "You are a data-grounded analytics assistant for Google Analytics reports.\n"
+    "\n"
+    "ABSOLUTE RULES:\n"
+    "- Use SQL tools for all calculations, aggregations, comparisons, and trends.\n"
+    "- Do not guess or infer results.\n"
+    "- If required instructions or fields are missing, stop and ask for them.\n"
+    "\n"
+    "INPUTS YOU RECEIVE:\n"
+    "- A report table and column definitions.\n"
+    "- SQL exploration and transformation tools.\n"
+    "- A structured user instruction (button-generated).\n"
+    "\n"
+    "WORKFLOW (IN ORDER):\n"
+    "1) Explore with SQL to understand structure and data quality.\n"
+    "2) If multiple queries are needed and independent, batch them in a single tool call response.\n"
+    "3) Run SQL that answers the instruction.\n"
+    "3) Summarize findings in plain language.\n"
+    "\n"
+    "OUTPUT RULES:\n"
+    "- Be concise and business-friendly.\n"
+    "- Do not show raw SQL, UUIDs, or system details.\n"
+    "- Say \"I don't know yet\" when exploration is insufficient.\n"
+)
 REPORT_CONTEXT_LABEL = "REPORT CONTEXT (JSON):"                              # Label that introduces report data in prompts
 USER_QUESTION_LABEL = "USER QUESTION:"                                      # Label that introduces the user's question
 
-ANALYSIS_RULES_PROMPT = (                                                    # Guardrails that limit what the AI can claim
-    "RULES:\n"
-    "You may only use the data provided in the reports.\n"
-    "Do not assume missing data.\n"
-    "Do not infer metrics that are not present.\n"
-    "If the user asks a question that cannot be answered with the provided reports, respond exactly with:\n"
-    "\"This question requires a report that is not currently included.\"\n"
-    "Be concise, factual, and analytical."
-)
 
 # ============================================================================
 # Button Prompt Templates
@@ -37,23 +53,23 @@ BUTTON_PROMPTS = {                                                          # Ma
         "Using ecommerce_funnel report, calculate conversion rates between sequential funnel stages. Standard funnel: item_view â†’ add_to_cart â†’ begin_checkout â†’ purchase. Calculate: (1) Stage-to-stage conversion rates (add_to_cart/item_view, begin_checkout/add_to_cart, purchase/begin_checkout), (2) Overall funnel conversion (purchase/item_view), (3) Identify stage with largest drop-off, (4) If date dimension exists, identify if drop-off is worsening/improving over time. Output exact conversion percentages and loss magnitude at each stage. DATA QA: Flag if later funnel stages have higher counts than earlier stages (tracking error - purchases > item_views impossible), if any stage shows exactly 0 events for >7 consecutive days (tracking breakage), or if conversion rates are 100% at any stage (unrealistic). Verify funnel stages are mutually exclusive and properly sequenced. STRICT RULES: Use ONLY funnel stages present in ecommerce_funnel report. Do NOT invent additional micro-steps. Do NOT estimate reasons for drop-off without user behavior data. ALLOWED: Impact modeling (e.g., 'improving checkoutâ†’purchase by 10% would yield X additional purchases'), time-based trend analysis if date field exists. FORBIDDEN: Specific UX/design recommendations, assumptions about user psychology, checkout process details not in data, A/B test suggestions without test data."
     ),
     "landing_page_optimization": (
-        "You are given a table where each row represents a page and includes metrics such as Page, Revenue, Users, Sessions, and other numeric fields.\n"
-        "\n"
-        "Task:\n"
-        "\n"
-        "Identify the top 5 pages by Revenue.\n"
-        "\n"
-        "Rank pages from highest to lowest Revenue.\n"
-        "\n"
-        "Use only the data provided. Do not estimate or invent values.\n"
-        "\n"
-        "Output format:\n"
-        "\n"
-        "Page name - Revenue\n"
-        "Page name - Revenue\n"
-        "Page name - Revenue\n"
-        "Page name - Revenue\n"
-        "Page name - Revenue"
+        "## Revenue: Top 5 Pages\n"
+        "REVENUE BLOCK ONLY. Goal: show the top 5 most revenue-performing landing pages.\n"
+        "Rules: rank by total Purchase Revenue (descending).\n"
+        "Output: three small tables.\n"
+        "Top Revenue Pages: Landing Page, Total Users, Purchase Revenue, Revenue per User, Session Length, Sessions per User, Conversion Rate, Bounce Rate.\n"
+        "Top Total Users: Landing Page, Total Users, Purchase Revenue, Revenue per User, Session Length, Sessions per User, Conversion Rate, Bounce Rate.\n"
+        "Top Revenue per User: Landing Page, Total Users, Purchase Revenue, Revenue per User, Session Length, Sessions per User, Conversion Rate, Bounce Rate.\n"
+        "Then add two sections with headings:\n"
+        "## Insights\n"
+        "Give bullet points. Keep language short and concrete. each on a new line\n"
+        "## Recommendations\n"
+        "Give bullet points. Each recommendation must be supported by the metrics shown. Avoid generic advice. each on an new line\n"
+        "Call out any pages with low users or sessions but unusually high revenue per user.\n"
+        "When interpreting high/low metrics, acknowledge multiple plausible explanations and avoid assuming a single cause.\n"
+        "If '(not set)' appears, call it out as untracked/unknown.\n"
+        "Recommend what qeueres would you run next and why to get better recommendations."
+        "Do not add extra sections."
+
     ),
 }
-

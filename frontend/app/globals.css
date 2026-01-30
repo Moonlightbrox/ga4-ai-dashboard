@@ -201,7 +201,107 @@ button:disabled {
   background: #f7f0e7;
   border-radius: 12px;
   padding: 14px;
-  white-space: pre-wrap;
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.answer-heading {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+.answer-paragraph {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.answer-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.answer-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.answer-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.answer-table th,
+.answer-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.answer-bar-cell {
+  padding: 4px 6px;
+}
+
+.answer-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #1b1b1b;
+  background: rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+}
+
+.answer-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: calc(var(--fill, 0) * 100%);
+  background: var(--bar-color, #e8b256);
+  opacity: 0.65;
+}
+
+.answer-bar span {
+  position: relative;
+  z-index: 1;
+  font-weight: 600;
+}
+
+.answer-bar-revenue {
+  --bar-color: #2f8f6c;
+}
+
+.answer-bar-conversion {
+  --bar-color: #8fd19e;
+}
+
+.answer-bar-bounce {
+  --bar-color: #d64545;
+}
+
+.answer-bar-session-length {
+  --bar-color: #bfe8c9;
+}
+
+.answer-bar-sessions {
+  --bar-color: #f0c94c;
+}
+
+.answer-bar-users {
+  --bar-color: #3a7dbb;
+}
+
+.answer-bar-generic {
+  --bar-color: #888888;
 }
 
 .stack {

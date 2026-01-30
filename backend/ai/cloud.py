@@ -1,5 +1,4 @@
-# This module builds prompts from GA4 report data and sends them to Claude.       
-# It also trims report rows for token control and estimates prompt size.         
+# This module runs the GA4 analysis agent and routes SQL tool calls.
 
 import json
 import os
@@ -7,199 +6,173 @@ import os
 import anthropic
 
 from backend.ai.prompts import (
-    ANALYSIS_RULES_PROMPT,
+    AGENT_SYSTEM_PROMPT,
     BUTTON_PROMPTS,
     REPORT_CONTEXT_LABEL,
-    SYSTEM_ROLE_PROMPT,
     USER_QUESTION_LABEL,
+)
+from backend.ai.tools.sql import (
+    build_report_catalog,
+    build_report_tables,
+    build_explore_tool_schema,
+    explore_table_data,
 )
 
 
-# ============================================================================
-# Row Selection Helpers
-# ============================================================================
-# This section picks the most important rows so prompts stay focused and small.
-
-# This function chooses the best metric to rank rows by importance.
-def _find_importance_metric(report_df) -> str | None:
-    metric_priority = [                                                       # Priority groups for ranking by business impact
-        ["purchaseRevenue", "revenue", "totalRevenue", "value"],
-        ["transactions", "purchases", "conversions"],
-        ["sessions", "totalUsers", "activeUsers", "users", "newUsers"],
-        ["userEngagementDuration", "engagementDuration", "views"],
-    ]
-    try:
-        columns = set(report_df.columns)                                      # Column names used to find a matching metric
-    except AttributeError:                                                    # Handles non-DataFrame input without columns
-        return None                                                           # Return None when no columns are available
-
-    for group in metric_priority:
-        for metric in group:
-            if metric in columns:
-                return metric                                                 # Return the first high-priority metric found
-    return None                                                               # Return None when no priority metric exists
+MAX_AGENT_STEPS = 20                                                         # Max tool-call turns per request
 
 
-# This function trims a DataFrame based on coverage percentage.
-def _select_rows_by_coverage(report_df, coverage_pct: int):
-    if report_df is None:
-        return report_df                                                      # Return original input when data is missing
-
-    if coverage_pct >= 100:
-        return report_df                                                      # Return all rows when full coverage is requested
-
-    try:
-        if report_df.empty:
-            return report_df                                                  # Return empty DataFrame without extra work
-    except AttributeError:                                                    # Handles non-DataFrame input safely
-        return report_df                                                      # Return original input when no DataFrame methods exist
-
-    importance_metric = _find_importance_metric(report_df)                    # Metric used to rank row importance
-    if not importance_metric:
-        try:
-            row_count = len(report_df)                                        # Total rows used for simple percentage slicing
-        except TypeError:                                                     # Handles objects without length
-            return report_df                                                  # Return original input when length is unknown
-        target_rows = max(1, int(round(row_count * (coverage_pct / 100))))    # Ensure at least one row remains
-        return report_df.head(target_rows)                                    # Return the top rows by position
-
-    try:
-        metric_series = report_df[importance_metric]                          # Series used to rank rows by value
-    except Exception:                                                         # Handles missing column or invalid access
-        return report_df                                                      # Return original input if ranking metric fails
-
-    metric_series = metric_series.fillna(0)                                   # Replace missing values so sorting is safe
-    try:
-        metric_values = metric_series.astype(float)                           # Convert to numbers for sorting and sums
-    except (TypeError, ValueError):                                           # Handles non-numeric data safely
-        metric_values = metric_series                                         # Fall back to original values
-
-    total_metric = metric_values.sum()                                        # Total used to compute coverage threshold
-    if total_metric <= 0:
-        return report_df                                                      # Return original input when totals are invalid
-
-    sorted_df = report_df.assign(_metric=metric_values).sort_values(            # Create and sort by temporary rank column
-        "_metric",                                                            # Temporary column for sorting
-        ascending=False,                                                      # Keep highest values first
-    )
-    cumulative = sorted_df["_metric"].cumsum()                                # Running total to measure coverage
-    threshold = total_metric * (coverage_pct / 100)                           # Coverage target in metric units
-    selected_df = sorted_df[cumulative <= threshold]                          # Keep rows inside coverage threshold
-    if selected_df.empty:
-        selected_df = sorted_df.head(1)                                       # Keep at least one row
-
-    return selected_df.drop(columns=["_metric"])                               # Return filtered DataFrame without temp column
+def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, len(text) // 4)                                            # Rough heuristic for Claude tokens
 
 
-# ============================================================================
-# Prompt Construction and Token Estimation
-# ============================================================================
-# This section builds the prompt text and estimates its size for UI hints.
-
-# This function builds the full AI prompt from reports and the user question.
-def build_prompt(
-    selected_reports: list[dict],                                             # Reports chosen by the user/UI
-    user_question: str,                                                       # Natural-language question from the user
-    prompt_key: str | None,                                                   # Optional template key for button prompts
-    coverage_pct: int = 100,                                                  # Percent of rows to include from each report
-) -> str:
-    report_context = []                                                       # List of serialized report payloads
-    for report in selected_reports:
-        report_df = report.get("data")                                        # DataFrame for this report
-        report_rows = []                                                      # Row data to embed in the prompt
-        if report_df is not None:
-            selected_df = _select_rows_by_coverage(report_df, coverage_pct)   # Reduce rows based on coverage
-            report_rows = (                                                   # Convert rows into JSON-friendly records
-                selected_df.to_dict(orient="records")
-                if selected_df is not None
-                else []
-            )
-        report_context.append({
-            "report_id": report["id"],                                        # Stable ID used across the app
-            "report_name": report["name"],                                    # Human-readable report name
-            "description": report["description"],                             # Short description shown in UI
-            "data": report_rows,                                              # Selected data rows for AI
-        })
-
-    report_context_json = json.dumps(
-        {"reports": report_context},                                          # Wrap all report payloads together
-        ensure_ascii=True,                                                    # Keep output ASCII-safe for prompts
-        default=str,                                                          # Convert unknown objects to strings
-    )
-
-    instruction_text = (
-        BUTTON_PROMPTS.get(prompt_key, user_question)                         # Use template prompt when available
-        if prompt_key                                                        # Only if a template key was provided
-        else user_question                                                    # Otherwise use the raw question
-    )
-
+def _payload_size_summary(system_prompt: str, messages: list, tools: list) -> str:
+    system_len = len(system_prompt or "")
+    messages_json = json.dumps(messages, ensure_ascii=True, default=str)
+    tools_json = json.dumps(tools, ensure_ascii=True, default=str)
+    total_len = system_len + len(messages_json) + len(tools_json)
+    approx_tokens = _estimate_tokens(system_prompt) + _estimate_tokens(messages_json) + _estimate_tokens(tools_json)
     return (
-        f"{SYSTEM_ROLE_PROMPT}\n\n"                                           # System instructions for the AI
-        f"{REPORT_CONTEXT_LABEL}\n"                                           # Label for the report JSON block
-        f"{report_context_json}\n\n"                                          # Serialized report data
-        f"{USER_QUESTION_LABEL}\n"                                            # Label for the user question
-        f"{instruction_text}\n\n"                                            # The actual question/prompt text
-        f"{ANALYSIS_RULES_PROMPT}"                                            # Guardrails for AI behavior
-    )                                                                         # Return the complete prompt string
-
-
-# This function estimates token count using a simple character heuristic.
-def estimate_tokens(prompt: str) -> int:
-    return max(1, len(prompt) // 4)                                           # Return a minimum estimate of 1 token
-
-
-# This function estimates prompt size for selected reports and a question.
-def get_estimated_tokens(
-    selected_reports: list[dict],                                             # Reports chosen by the user/UI
-    user_question: str,                                                       # Natural-language question from the user
-    prompt_key: str | None,                                                   # Optional template key for button prompts
-    coverage_pct: int = 100,                                                  # Percent of rows to include from each report
-) -> int:
-    prompt = build_prompt(
-        selected_reports=selected_reports,                                    # Reports to include in the prompt
-        user_question=user_question,                                          # User question or template label
-        prompt_key=prompt_key,                                                # Optional prompt template key
-        coverage_pct=coverage_pct,                                            # Row coverage control
+        f"Payload chars: system={system_len}, messages={len(messages_json)}, tools={len(tools_json)}, "
+        f"total={total_len}, approx_tokens={approx_tokens}"
     )
-    return estimate_tokens(prompt)                                            # Return the estimated token count
 
 
-# ============================================================================
-# AI Analysis Execution
-# ============================================================================
-# This section sends the prompt to Claude and returns the AI response text.
+def _extract_text_blocks(message) -> str:
+    parts = []
+    for block in getattr(message, "content", []):
+        if getattr(block, "type", None) == "text":
+            parts.append(block.text)
+    return "\n".join(parts).strip()
 
-# This function runs the end-to-end AI analysis request.
+
+def _extract_tool_uses(message) -> list:
+    tool_uses = []
+    for block in getattr(message, "content", []):
+        if getattr(block, "type", None) == "tool_use":
+            tool_uses.append(block)
+    return tool_uses
+
+
+def build_agent_prompt(
+    selected_reports: list[dict],
+    user_question: str,
+    prompt_key: str | None,
+) -> str:
+    instruction_text = (
+        BUTTON_PROMPTS.get(prompt_key, user_question)
+        if prompt_key
+        else user_question
+    )
+    catalog_json = json.dumps(
+        {"reports": build_report_catalog(selected_reports)},
+        ensure_ascii=True,
+        default=str,
+    )
+    return (
+        f"{REPORT_CONTEXT_LABEL}\n"
+        f"{catalog_json}\n\n"
+        f"{USER_QUESTION_LABEL}\n"
+        f"{instruction_text}"
+    )
+
 def analyze_selected_reports(
     selected_reports: list[dict],                                             # Reports to include in the AI prompt
     user_question: str,                                                       # The user's question in plain language
     prompt_key: str | None = None,                                            # Optional template key for button prompts
-    coverage_pct: int = 100,                                                  # Percent of report rows to include
 ) -> str:
-
-    prompt = build_prompt(
-        selected_reports=selected_reports,                                    # Chosen report data
-        user_question=user_question,                                          # User request text
-        prompt_key=prompt_key,                                                # Optional prompt template
-        coverage_pct=coverage_pct,                                            # Row sampling coverage
+    prompt = build_agent_prompt(
+        selected_reports=selected_reports,
+        user_question=user_question,
+        prompt_key=prompt_key,
     )
 
     api_key = os.getenv("ANTHROPIC_API_KEY")                                  # API key for Anthropic Claude
     if not api_key:
-        return (                                                              # Return a helpful error with prompt preview
+        return (
             "AI is not configured. Set ANTHROPIC_API_KEY to enable responses.\n\n"
             "Prompt preview:\n"
             f"{prompt}"
-        )                                                                     # Return when API key is missing
+        )
 
-    client = anthropic.Anthropic(api_key=api_key)                             # Create Claude API client
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",                                     # Claude model selection
-        max_tokens=4096,                                                       # Limit response length to control cost
-        messages=[{                                                           # Single user message payload
-            "role": "user",                                                   # Message role for Claude API
-            "content": prompt,                                                # Prompt text sent to Claude
+    tables = build_report_tables(selected_reports)
+    tools = [build_explore_tool_schema()]
+    client = anthropic.Anthropic(api_key=api_key)
+
+    messages = [{"role": "user", "content": prompt}]
+    last_message = None
+    print(_payload_size_summary(AGENT_SYSTEM_PROMPT, messages, tools))        # Debug: payload size
+
+    for step in range(MAX_AGENT_STEPS):
+        print("AI agent step started.")                                       # Debug: track agent steps
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            tools=tools,
+            system=AGENT_SYSTEM_PROMPT,
+            messages=messages,
+        )
+        last_message = message
+        tool_uses = _extract_tool_uses(message)
+        messages.append({"role": "assistant", "content": message.content})
+        print(f"AI agent tool calls: {len(tool_uses)}")                       # Debug: tool call count
+
+        if not tool_uses:
+            text = _extract_text_blocks(message)
+            if text:
+                return text
+            print("AI agent returned no text output.")                        # Debug: no text
+            break
+
+        tool_results = []
+        for tool_use in tool_uses:
+            if isinstance(tool_use.input, dict):
+                intent = tool_use.input.get("intent")
+                if intent:
+                    print(f"Tool intent ({tool_use.name}): {intent}")         # Debug: tool intent
+            if tool_use.name == "explore_table_data":
+                params = tool_use.input if isinstance(tool_use.input, dict) else {}
+                action = params.get("action")
+                table_name = params.get("table_name")
+                query = params.get("query")
+                if action:
+                    print(f"Explore action: {action}")                         # Debug: explore action
+                if table_name:
+                    print(f"Explore table: {table_name}")                      # Debug: explore table name
+                if query:
+                    print(f"SQL query: {query}")                               # Debug: SQL query text
+                result = explore_table_data(params, tables)
+            else:
+                result = {"error": f"Unknown tool: {tool_use.name}."}
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tool_use.id,
+                "content": json.dumps(result, ensure_ascii=True, default=str),
+            })
+            print(f"Tool result for {tool_use.name}: {result.get('error', 'ok')}")  # Debug: tool result status
+
+        messages.append({"role": "user", "content": tool_results})
+        print(_payload_size_summary(AGENT_SYSTEM_PROMPT, messages, tools))    # Debug: payload size
+
+        if step == MAX_AGENT_STEPS - 1:
+            print("AI agent reached max steps; forcing final answer.")        # Debug: forced final answer
+
+    fallback_text = _extract_text_blocks(last_message)
+    if fallback_text:
+        return fallback_text
+
+    forced_message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4096,
+        system=AGENT_SYSTEM_PROMPT,
+        messages=messages + [{
+            "role": "user",
+            "content": "Provide the final answer now. Do not call tools.",
         }],
     )
-
-    return message.content[0].text                                            # Return the assistant response text
+    forced_text = _extract_text_blocks(forced_message)
+    if forced_text:
+        return forced_text
+    return "No response generated. The agent did not produce a final text answer."

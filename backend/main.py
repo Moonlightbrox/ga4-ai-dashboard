@@ -198,7 +198,6 @@ class AnalyzeRequest(BaseModel):
     selected_reports: List[ReportPayload] = Field(default_factory=list)      # Reports selected for analysis.
     user_question: str                                                       # Natural-language user question.
     prompt_key: Optional[str] = None                                         # Optional template key for prompts.
-    coverage_pct: int = 90                                                   # Percent of rows to include in prompt.
 
 
 # ------------------------------------------------------------------------------
@@ -409,7 +408,6 @@ def analyze(req: AnalyzeRequest) -> dict[str, Any]:                          # R
             selected_reports=reports,
             user_question=req.user_question,
             prompt_key=req.prompt_key,
-            coverage_pct=req.coverage_pct,
         )
     except Exception as exc:                                                 # Handle AI/prompt errors safely.
         raise HTTPException(status_code=500, detail=str(exc))

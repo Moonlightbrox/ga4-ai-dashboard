@@ -38,6 +38,21 @@ def _round_columns(
 
 
 # ADDED
+def _normalize_rate_to_percent(
+    df: pd.DataFrame,
+    column: str,
+    decimals: int = 2,
+) -> pd.DataFrame:
+    if column not in df.columns:
+        return df
+    series = pd.to_numeric(df[column], errors="coerce").fillna(0.0)
+    if not series.empty and series.max(skipna=True) <= 1:
+        series = series * 100
+    df[column] = round_metric(series, decimals=decimals)
+    return df
+
+
+# ADDED
 def _add_duration_per_user_display(
     df: pd.DataFrame,
     seconds_col: str,
@@ -107,6 +122,7 @@ HUMAN_READABLE_COLUMNS = {                                                   # H
     "revenue_per_session": "Revenue per Session",
     "sessions_per_user": "Sessions per User",
     "conversion_rate": "Conversion Rate",
+    "bounceRate": "Bounce Rate",
     "active_user_ratio": "Active User Ratio",
     "country": "Country",
     "city": "City",
@@ -376,11 +392,11 @@ def get_landing_pages(
         "sessions",
         "engagedSessions",
         "userEngagementDuration",
-        "user_engagement_duration_per_user",                                # DURATION COLUMN ADDED
         "user_engagement_duration_per_session",                             # DURATION COLUMN ADDED
         "transactions",
         "purchaseRevenue",
         "totalUsers",
+        "bounceRate",
         "revenue_per_user",                                                  # DERIVED METRIC # ADDED
         "revenue_per_session",                                               # DERIVED METRIC # ADDED
         "sessions_per_user",                                                 # DERIVED METRIC # ADDED
@@ -398,6 +414,7 @@ def get_landing_pages(
                 "transactions",
                 "purchaseRevenue",
                 "totalUsers",
+                "bounceRate",
             ],
             dimensions=["landingPage"],
         )
@@ -414,12 +431,6 @@ def get_landing_pages(
             df[col] = 0                                                       # Fill missing columns to keep schema stable
 
 
-    df = _add_duration_per_user_display(                                      # DURATION COLUMN ADDED
-        df,
-        seconds_col="userEngagementDuration",
-        users_col="totalUsers",
-        display_col="user_engagement_duration_per_user",
-    )
     df = _add_duration_per_session_display(                                   # DURATION COLUMN ADDED
         df,
         seconds_col="userEngagementDuration",
@@ -451,11 +462,16 @@ def get_landing_pages(
         target_col="conversion_rate",
     )
 
+    df = _normalize_rate_to_percent(df, "conversion_rate", decimals=2)
+    df = _normalize_rate_to_percent(df, "bounceRate", decimals=2)
     df = _round_columns(df, REVENUE_COLUMNS)
 
-    return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
+    df = _apply_human_readable_columns(                                       # HUMAN-READABLE COLUMN # MODIFIED
         df[expected_columns]                                                 # Return ordered, consistent columns
     )
+    return df.rename(columns={                                               # Landing-page-specific label
+        "User Engagement Duration per Session": "Session Length",
+    })
 
 
 # This report breaks down performance by device, OS, and browser.

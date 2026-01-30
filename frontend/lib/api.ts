@@ -81,7 +81,6 @@ export async function runAnalysis(payload: {
   selected_reports: ReportPayload[];                                         // Reports included in the AI prompt.
   user_question: string;                                                     // Question to ask the AI.
   prompt_key?: string | null;                                                // Optional prompt template key.
-  coverage_pct: number;                                                      // Percent of rows to include per report.
 }) {
   return request<{ answer: string }>("/api/ai/analyze", {
     method: "POST",
