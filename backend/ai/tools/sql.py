@@ -131,7 +131,14 @@ def _validate_query(query: str, allowed_tables: set[str]) -> str | None:
     if ";" in query_stripped.rstrip(";"):
         return "Only a single SQL statement is allowed."
 
-    referenced_tables = set(re.findall(rf"\b{ALLOWED_TABLE_PREFIX}[a-zA-Z0-9_]+\b", query_stripped))
+    # Only validate report table names that appear in FROM/JOIN clauses.
+    # This avoids false positives from column aliases like "report_type".
+    referenced_tables = set(
+        re.findall(
+            rf"(?i)\b(?:from|join)\s+({ALLOWED_TABLE_PREFIX}[a-zA-Z0-9_]+)\b",
+            query_stripped,
+        )
+    )
     if not referenced_tables:
         return "Query must reference a report table."
     unknown = referenced_tables - allowed_tables
