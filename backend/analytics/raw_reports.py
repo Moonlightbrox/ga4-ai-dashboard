@@ -2,6 +2,8 @@
 # It also provides a registry and helpers so the UI can fetch consistent report data.
 
 import pandas as pd
+import re
+from urllib.parse import urlsplit
 from backend.data.ga4_service import fetch_ga4_report
 from backend.data.preprocess import ga4_to_dataframe
 from backend.components.format import format_duration, round_metric         # MODIFIED
@@ -86,6 +88,89 @@ def _add_duration_per_session_display(
     return df
 
 
+def _normalize_landing_path(raw_value: object) -> str:
+    if raw_value is None:
+        return ""
+    value = str(raw_value).strip()
+    if not value:
+        return ""
+
+    lowered = value.lower()
+    if lowered == "(not set)":
+        return "(not set)"
+
+    # Handle full URLs and keep only the path.
+    parsed = urlsplit(value)
+    path = parsed.path if parsed.scheme or parsed.netloc else value
+    path = path.split("?", 1)[0].split("#", 1)[0].strip()
+    if not path:
+        return "/"
+    if not path.startswith("/"):
+        path = f"/{path}"
+    path = re.sub(r"/{2,}", "/", path)
+    if len(path) > 1 and path.endswith("/"):
+        path = path.rstrip("/")
+    return path.lower()
+
+
+def _classify_landing_page_type(path_value: object) -> str:
+    path = _normalize_landing_path(path_value)
+
+    if not path or path == "(not set)":
+        return "other"
+    if path == "/":
+        return "other"
+
+    parts = [part for part in path.split("/") if part]
+    first = parts[0] if parts else ""
+
+    product_score = 0
+    category_score = 0
+    other_score = 0
+    if first in {"product", "products", "p", "item", "items", "sku"}:
+        product_score += 4
+    if re.search(r"/(product|products|item|items|sku)/", path):
+        product_score += 2
+    if len(parts) >= 2 and first in {"product", "products", "p"}:
+        product_score += 1
+
+    if first in {"product-category", "product-categories", "category", "categories", "collection", "collections", "shop", "c"}:
+        category_score += 4
+    if re.search(r"/(product-category|category|categories|collection|collections|shop)/", path):
+        category_score += 2
+    if len(parts) >= 2 and first in {"product-category", "category", "categories", "collection", "collections"}:
+        category_score += 1
+
+    if first in {"cart", "checkout", "account", "blog", "search", "about", "contact", "faq", "help", "privacy-policy", "terms"}:
+        other_score += 4
+    if re.search(r"/(cart|checkout|account|login|register|blog|search|about|contact|help|faq)/", path):
+        other_score += 2
+
+    scores = {
+        "product": product_score,
+        "category": category_score,
+        "other": other_score,
+    }
+    best_label = max(scores, key=scores.get)
+    best_score = scores[best_label]
+    if best_score <= 0:
+        return "other"
+    return best_label
+
+
+def _add_landing_page_type_columns(
+    df: pd.DataFrame,
+    landing_page_col: str = "landingPage",
+) -> pd.DataFrame:
+    if landing_page_col not in df.columns:
+        df["page_type"] = "other"
+        return df
+
+    classified = df[landing_page_col].map(_classify_landing_page_type)
+    df["page_type"] = classified
+    return df
+
+
 # REMOVED
 # ADDED
 HUMAN_READABLE_COLUMNS = {                                                   # HUMAN-READABLE COLUMN # ADDED
@@ -132,6 +217,7 @@ HUMAN_READABLE_COLUMNS = {                                                   # H
     "sessionSource": "Session Source",
     "sessionMedium": "Session Medium",
     "landingPage": "Landing Page",
+    "page_type": "Page Type",
     "pagePath": "Page Path",
     "pageTitle": "Page Title",
     "itemName": "Item Name",
@@ -389,6 +475,7 @@ def get_landing_pages(
 
     expected_columns = [                                                      # Expected schema for consistent UI use # MODIFIED
         "landingPage",
+        "page_type",
         "sessions",
         "engagedSessions",
         "userEngagementDuration",
@@ -465,6 +552,7 @@ def get_landing_pages(
     df = _normalize_rate_to_percent(df, "conversion_rate", decimals=2)
     df = _normalize_rate_to_percent(df, "bounceRate", decimals=2)
     df = _round_columns(df, REVENUE_COLUMNS)
+    df = _add_landing_page_type_columns(df, landing_page_col="landingPage")
 
     df = _apply_human_readable_columns(                                       # HUMAN-READABLE COLUMN # MODIFIED
         df[expected_columns]                                                 # Return ordered, consistent columns

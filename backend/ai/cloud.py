@@ -61,11 +61,11 @@ def build_agent_prompt(
     user_question: str,
     prompt_key: str | None,
 ) -> str:
-    instruction_text = (
-        BUTTON_PROMPTS.get(prompt_key, user_question)
-        if prompt_key
-        else user_question
-    )
+    if prompt_key:
+        template = BUTTON_PROMPTS.get(prompt_key, user_question)
+        instruction_text = template.replace("{USER_QUESTION}", user_question)
+    else:
+        instruction_text = user_question
     catalog_json = json.dumps(
         {"reports": build_report_catalog(selected_reports)},
         ensure_ascii=True,

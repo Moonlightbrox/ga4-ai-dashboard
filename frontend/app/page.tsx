@@ -452,7 +452,7 @@ export default function HomePage() {
                 {isAsking ? "Asking..." : "Ask AI"}
               </button>
             </div>
-            {answer && <AnswerRenderer answer={answer} />}
+            {answer && <AnswerRenderer answer={answer} selectedReports={visibleReports} />}
           </div>
         )}
       </section>
@@ -769,6 +769,12 @@ function ReportPanel({
   );
 }
 
+type AnswerBlock =
+  | { type: "heading"; text: string }
+  | { type: "paragraph"; text: string }
+  | { type: "list"; items: string[] }
+  | { type: "table"; headers: string[]; rows: string[][] };
+
 type LandingMetricBlock = {
   title: string;
   rows: { label: string; value: string }[];
@@ -898,11 +904,14 @@ function LandingPageHighlights({ report }: { report?: ReportPayload }) {
   );
 }
 
-type AnswerBlock =
-  | { type: "heading"; text: string }
-  | { type: "paragraph"; text: string }
-  | { type: "list"; items: string[] }
-  | { type: "table"; headers: string[]; rows: string[][] };
+type InsightFollowupAction = "basis" | "deep_dive";
+
+type InsightFollowupState = {
+  loading?: InsightFollowupAction | null;
+  basis?: string;
+  deepDive?: string;
+  error?: string | null;
+};
 
 function parseTableRow(line: string) {
   const trimmed = line.trim();
@@ -995,12 +1004,72 @@ function parseAnswerBlocks(answer: string): AnswerBlock[] {
   return blocks;
 }
 
-function AnswerRenderer({ answer }: { answer: string }) {
+function AnswerRenderer({
+  answer,
+  selectedReports,
+}: {
+  answer: string;
+  selectedReports: ReportPayload[];
+}) {
   const blocks = useMemo(() => parseAnswerBlocks(answer), [answer]);
+  const [insightFollowups, setInsightFollowups] = useState<Record<string, InsightFollowupState>>({});
+
+  useEffect(() => {
+    setInsightFollowups({});
+  }, [answer]);
+
+  async function handleInsightFollowup(
+    insightId: string,
+    insightText: string,
+    action: InsightFollowupAction
+  ) {
+    setInsightFollowups((prev) => ({
+      ...prev,
+      [insightId]: {
+        ...(prev[insightId] ?? {}),
+        loading: action,
+        error: null,
+      },
+    }));
+
+    try {
+      const promptKey =
+        action === "basis"
+          ? "insight_basis_explainer"
+          : "insight_deep_dive_recommendations";
+      const result = await runAnalysis({
+        selected_reports: selectedReports,
+        user_question: insightText,
+        prompt_key: promptKey,
+      });
+      setInsightFollowups((prev) => ({
+        ...prev,
+        [insightId]: {
+          ...(prev[insightId] ?? {}),
+          loading: null,
+          error: null,
+          basis: action === "basis" ? result.answer : prev[insightId]?.basis,
+          deepDive: action === "deep_dive" ? result.answer : prev[insightId]?.deepDive,
+        },
+      }));
+    } catch (err) {
+      setInsightFollowups((prev) => ({
+        ...prev,
+        [insightId]: {
+          ...(prev[insightId] ?? {}),
+          loading: null,
+          error: (err as Error).message,
+        },
+      }));
+    }
+  }
+
+  let activeSection = "";
   return (
     <div className="answer">
       {blocks.map((block, index) => {
         if (block.type === "heading") {
+          activeSection = block.text.trim().toLowerCase();
           return (
             <h3 key={`answer-heading-${index}`} className="answer-heading">
               {block.text}
@@ -1008,49 +1077,69 @@ function AnswerRenderer({ answer }: { answer: string }) {
           );
         }
         if (block.type === "table") {
-          const columnMaxes = block.headers.map((_, colIdx) => {
-            let max = 0;
-            block.rows.forEach((row) => {
-              const value = parseAnswerNumber(row[colIdx]);
-              if (value !== null && value > max) {
-                max = value;
-              }
-            });
-            return max;
-          });
-          return (
-            <div key={`answer-table-${index}`} className="answer-table-wrap">
-              <table className="answer-table">
-                <thead>
-                  <tr>
-                    {block.headers.map((header, idx) => (
-                      <th key={`answer-head-${index}-${idx}`}>{header}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {block.rows.map((row, rowIdx) => (
-                    <tr key={`answer-row-${index}-${rowIdx}`}>
-                      {row.map((cell, cellIdx) => (
-                        <AnswerCell
-                          key={`answer-cell-${index}-${rowIdx}-${cellIdx}`}
-                          value={cell}
-                          columnName={block.headers[cellIdx]}
-                          maxValue={columnMaxes[cellIdx]}
-                        />
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          );
+          return <AnswerTable key={`answer-table-${index}`} block={block} />;
         }
         if (block.type === "list") {
+          const isInsightsSection = activeSection === "insights";
           return (
             <ul key={`answer-list-${index}`} className="answer-list">
               {block.items.map((item, itemIdx) => (
-                <li key={`answer-item-${index}-${itemIdx}`}>{item}</li>
+                <li key={`answer-item-${index}-${itemIdx}`}>
+                  {isInsightsSection ? (
+                    <div className="insight-item">
+                      <span>{item}</span>
+                      <div className="insight-actions">
+                        <button
+                          type="button"
+                          className="insight-action-button"
+                          onClick={() =>
+                            handleInsightFollowup(`${index}-${itemIdx}`, item, "basis")
+                          }
+                          disabled={insightFollowups[`${index}-${itemIdx}`]?.loading != null}
+                        >
+                          {insightFollowups[`${index}-${itemIdx}`]?.loading === "basis"
+                            ? "Loading basis..."
+                            : "What is this based on?"}
+                        </button>
+                        <button
+                          type="button"
+                          className="insight-action-button"
+                          onClick={() =>
+                            handleInsightFollowup(`${index}-${itemIdx}`, item, "deep_dive")
+                          }
+                          disabled={insightFollowups[`${index}-${itemIdx}`]?.loading != null}
+                        >
+                          {insightFollowups[`${index}-${itemIdx}`]?.loading === "deep_dive"
+                            ? "Loading deep dive..."
+                            : "Deep dive recommendations"}
+                        </button>
+                      </div>
+                      {insightFollowups[`${index}-${itemIdx}`]?.error && (
+                        <p className="insight-followup-error">
+                          {insightFollowups[`${index}-${itemIdx}`]?.error}
+                        </p>
+                      )}
+                      {insightFollowups[`${index}-${itemIdx}`]?.basis && (
+                        <div className="insight-followup">
+                          <strong>What this is based on</strong>
+                          <ReadOnlyAnswerRenderer
+                            answer={insightFollowups[`${index}-${itemIdx}`]?.basis ?? ""}
+                          />
+                        </div>
+                      )}
+                      {insightFollowups[`${index}-${itemIdx}`]?.deepDive && (
+                        <div className="insight-followup">
+                          <strong>Deep dive recommendations</strong>
+                          <ReadOnlyAnswerRenderer
+                            answer={insightFollowups[`${index}-${itemIdx}`]?.deepDive ?? ""}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    item
+                  )}
+                </li>
               ))}
             </ul>
           );
@@ -1061,6 +1150,139 @@ function AnswerRenderer({ answer }: { answer: string }) {
           </p>
         );
       })}
+    </div>
+  );
+}
+
+function ReadOnlyAnswerRenderer({ answer }: { answer: string }) {
+  const blocks = useMemo(() => parseAnswerBlocks(answer), [answer]);
+  return (
+    <div className="answer answer-followup">
+      {blocks.map((block, index) => {
+        if (block.type === "heading") {
+          return (
+            <h3 key={`followup-heading-${index}`} className="answer-heading">
+              {block.text}
+            </h3>
+          );
+        }
+        if (block.type === "table") {
+          return <AnswerTable key={`followup-table-${index}`} block={block} />;
+        }
+        if (block.type === "list") {
+          return (
+            <ul key={`followup-list-${index}`} className="answer-list">
+              {block.items.map((item, itemIdx) => (
+                <li key={`followup-item-${index}-${itemIdx}`}>{item}</li>
+              ))}
+            </ul>
+          );
+        }
+        return (
+          <p key={`followup-paragraph-${index}`} className="answer-paragraph">
+            {block.text}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function AnswerTable({
+  block,
+}: {
+  block: Extract<AnswerBlock, { type: "table" }>;
+}) {
+  const [sortConfig, setSortConfig] = useState<{
+    colIdx: number;
+    direction: SortDirection;
+  } | null>(null);
+
+  const sortedRows = useMemo(() => {
+    if (!sortConfig) return block.rows;
+    const multiplier = sortConfig.direction === "asc" ? 1 : -1;
+    const rowsWithIndex = block.rows.map((row, index) => ({ row, index }));
+    rowsWithIndex.sort((left, right) => {
+      const leftValue = left.row[sortConfig.colIdx] ?? "";
+      const rightValue = right.row[sortConfig.colIdx] ?? "";
+      const order = compareValues(leftValue, rightValue);
+      if (order !== 0) {
+        return order * multiplier;
+      }
+      return left.index - right.index;
+    });
+    return rowsWithIndex.map((item) => item.row);
+  }, [block.rows, sortConfig]);
+
+  const columnMaxes = useMemo(
+    () =>
+      block.headers.map((_, colIdx) => {
+        let max = 0;
+        block.rows.forEach((row) => {
+          const value = parseAnswerNumber(row[colIdx] ?? "");
+          if (value !== null && value > max) {
+            max = value;
+          }
+        });
+        return max;
+      }),
+    [block.headers, block.rows]
+  );
+
+  const handleSort = (colIdx: number) => {
+    setSortConfig((prev) => {
+      if (prev?.colIdx === colIdx) {
+        return {
+          colIdx,
+          direction: prev.direction === "asc" ? "desc" : "asc",
+        };
+      }
+      return { colIdx, direction: "asc" };
+    });
+  };
+
+  return (
+    <div className="answer-table-wrap">
+      <table className="answer-table">
+        <thead>
+          <tr>
+            {block.headers.map((header, colIdx) => {
+              const isSorted = sortConfig?.colIdx === colIdx;
+              const direction = isSorted ? sortConfig?.direction : null;
+              const indicator = direction === "asc" ? "^" : direction === "desc" ? "v" : "";
+              return (
+                <th
+                  key={`answer-head-${colIdx}`}
+                  aria-sort={direction ? (direction === "asc" ? "ascending" : "descending") : "none"}
+                >
+                  <button
+                    type="button"
+                    className="report-sort-button"
+                    onClick={() => handleSort(colIdx)}
+                  >
+                    <span className="report-sort-label">{header}</span>
+                    <span className="report-sort-indicator">{indicator}</span>
+                  </button>
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {sortedRows.map((row, rowIdx) => (
+            <tr key={`answer-row-${rowIdx}`}>
+              {block.headers.map((header, cellIdx) => (
+                <AnswerCell
+                  key={`answer-cell-${rowIdx}-${cellIdx}`}
+                  value={row[cellIdx] ?? ""}
+                  columnName={header}
+                  maxValue={columnMaxes[cellIdx]}
+                />
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
