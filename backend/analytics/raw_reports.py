@@ -171,6 +171,101 @@ def _add_landing_page_type_columns(
     return df
 
 
+def _normalize_session_source(raw_value: object) -> str:
+    """Normalize session source variations to canonical names."""
+    if raw_value is None:
+        return ""
+    value = str(raw_value).strip()
+    if not value:
+        return ""
+    
+    lowered = value.lower()
+    
+    # Handle special cases
+    if lowered in {"(not set)", "(data not available)", ""}:
+        return "(not set)"
+    
+    if lowered == "(direct)":
+        return "Direct"
+    
+    # Facebook variations
+    if any(fb_pattern in lowered for fb_pattern in ["fb", "facebook"]):
+        return "Facebook"
+    
+    # Google variations
+    if any(google_pattern in lowered for google_pattern in ["google", "googleshopping"]):
+        return "Google"
+    
+    # Instagram variations
+    if any(ig_pattern in lowered for ig_pattern in ["ig", "instagram"]):
+        return "Instagram"
+    
+    # YouTube
+    if "youtube" in lowered:
+        return "YouTube"
+    
+    # Bing
+    if "bing" in lowered:
+        return "Bing"
+    
+    # AI Search engines
+    if any(ai_pattern in lowered for ai_pattern in ["chatgpt", "copilot", "claude"]):
+        return "AI Search"
+    
+    # Yahoo
+    if "yahoo" in lowered:
+        return "Yahoo"
+    
+    # DuckDuckGo
+    if "duckduckgo" in lowered:
+        return "DuckDuckGo"
+    
+    # Return original if no match (for referral sites, etc.)
+    return value
+
+
+def _classify_traffic_source_type(source_value: object) -> str:
+    """Classify normalized session source into source type categories."""
+    normalized = _normalize_session_source(source_value)
+    normalized_lower = normalized.lower()
+    
+    if not normalized or normalized == "(not set)":
+        return "other"
+    
+    if normalized == "Direct":
+        return "direct"
+    
+    if normalized in {"Facebook", "Instagram", "YouTube"}:
+        return "social"
+    
+    if normalized in {"Google", "Bing", "Yahoo", "DuckDuckGo", "AI Search"}:
+        return "search"
+    
+    # Everything else (referrals, unknown sources)
+    return "other"
+
+
+def _add_traffic_source_type_column(
+    df: pd.DataFrame,
+    session_source_col: str = "sessionSource",
+) -> pd.DataFrame:
+    """Add normalized source and source_type columns to traffic dataframe."""
+    if session_source_col not in df.columns:
+        df["source_type"] = "other"
+        df["sessionSourceNormalized"] = ""
+        return df
+    
+    # Add normalized source column
+    normalized = df[session_source_col].map(_normalize_session_source)
+    df["sessionSourceNormalized"] = normalized
+    
+    # Add source type column
+    classified = df[session_source_col].map(_classify_traffic_source_type)
+    df["source_type"] = classified
+    
+    return df
+
+
 # REMOVED
 # ADDED
 HUMAN_READABLE_COLUMNS = {                                                   # HUMAN-READABLE COLUMN # ADDED
@@ -216,6 +311,8 @@ HUMAN_READABLE_COLUMNS = {                                                   # H
     "browser": "Browser",
     "sessionSource": "Session Source",
     "sessionMedium": "Session Medium",
+    "sessionSourceNormalized": "Session Source (Normalized)",
+    "source_type": "Source Type",
     "landingPage": "Landing Page",
     "page_type": "Page Type",
     "pagePath": "Page Path",
@@ -259,6 +356,8 @@ def get_traffic_overview(
         "deviceCategory",
         "sessionSource",
         "sessionMedium",
+        "sessionSourceNormalized",                                            # NORMALIZED SOURCE ADDED
+        "source_type",                                                       # SOURCE TYPE ADDED
         "totalUsers",
         "activeUsers",
         "newUsers",
@@ -269,6 +368,7 @@ def get_traffic_overview(
         "user_engagement_duration_per_session",                             # DURATION COLUMN ADDED
         "transactions",
         "purchaseRevenue",
+        "bounceRate",                                                        # BOUNCE RATE ADDED
         "revenue_per_user",                                                  # DERIVED METRIC # ADDED
         "revenue_per_active_user",                                           # DERIVED METRIC # ADDED
         "revenue_per_session",                                               # DERIVED METRIC # ADDED
@@ -289,6 +389,7 @@ def get_traffic_overview(
                 "userEngagementDuration",
                 "transactions",
                 "purchaseRevenue",
+                "bounceRate",
             ],
             dimensions=[
                 "country",
@@ -353,6 +454,9 @@ def get_traffic_overview(
         target_col="conversion_rate",
     )
 
+    df = _normalize_rate_to_percent(df, "conversion_rate", decimals=2)
+    df = _normalize_rate_to_percent(df, "bounceRate", decimals=2)
+    df = _add_traffic_source_type_column(df, session_source_col="sessionSource")
     df = _round_columns(df, REVENUE_COLUMNS)
 
     return _apply_human_readable_columns(                                     # HUMAN-READABLE COLUMN # MODIFIED
