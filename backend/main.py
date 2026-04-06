@@ -21,7 +21,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from pydantic import BaseModel, Field
 
-from logs.agent_logging import configure_agent_logging
+from backend.logs.agent_logging import configure_agent_logging
 from backend import session_store
 from backend.ai.cloud import analyze_selected_reports
 from backend.ai.prompts import (
@@ -44,7 +44,7 @@ load_dotenv(dotenv_path=ENV_PATH)                                            # L
 
 session_store.init_db()                                                      # SQLite backing for OAuth sessions (survives restarts).
 
-configure_agent_logging()                                                    # Structured JSON → stdout + logs/agent.jsonl
+configure_agent_logging()                                                    # Structured JSON → stdout + backend/logs/agent.jsonl
 
 app = FastAPI()                                                              # FastAPI app instance for the backend.
 

@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-_LOGGER_NAME = "logs.agent"
+_LOGGER_NAME = "backend.logs.agent"
 _tls = threading.local()
 
 # Default log file next to this module

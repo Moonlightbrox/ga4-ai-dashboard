@@ -1600,22 +1600,35 @@ function compareAnswerCellValues(a: string, b: string, columnHeader?: string) {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
 
+/**
+ * Maps table header text to bar color family. Avoid matching substrings like "session" inside
+ * "Session Source" / "Session Medium" — those are dimensions and would flip colors by property
+ * depending on how the model labels columns.
+ */
 function columnKind(name: string) {
   const lower = name.toLowerCase();
+  if (/session\s+(source|medium|campaign|channel|default|google)/i.test(name)) return "generic";
   if (lower.includes("revenue")) return "revenue";
-  if (lower.includes("conversion")) return "conversion";
+  if (lower.includes("conversion") || /\bconv\.?\b/.test(lower)) return "conversion";
   if (lower.includes("bounce")) return "bounce";
   if (lower.includes("session length")) return "session-length";
   if (lower.includes("engagement") && lower.includes("duration")) return "session-length";
   if (lower.includes("duration") && lower.includes("per session")) return "session-length";
-  if (lower.includes("session")) return "sessions";
-  if (lower.includes("user")) return "users";
+  if (lower.includes("user engagement")) return "session-length";
+  if (lower.includes("engagement")) return "session-length";
+  if (lower.includes("duration")) return "session-length";
+  if (/\busers?\b/.test(lower) || lower.includes("new users") || lower.includes("total users")) return "users";
+  if (/\bsessions?\b/.test(lower)) return "sessions";
   return "generic";
 }
 
 function formatPercentageValue(value: string, columnName: string): string {
   const lower = columnName.toLowerCase();
-  const isRateColumn = lower.includes("bounce") || lower.includes("conversion");
+  const isRateColumn =
+    lower.includes("bounce") ||
+    lower.includes("conversion") ||
+    /\bconv\.?\b/.test(lower) ||
+    lower.includes("engagement");
   if (!isRateColumn) return value;
   
   const numericValue = parseAnswerNumber(value);

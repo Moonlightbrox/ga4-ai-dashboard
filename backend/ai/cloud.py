@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import anthropic
 
-from logs.agent_logging import (
+from backend.logs.agent_logging import (
     begin_agent_trace,
     end_agent_trace,
     extract_usage_fields,
@@ -31,6 +31,67 @@ from backend.ai.tools.sql import (
     build_explore_tool_schema,
     explore_table_data,
 )
+
+
+def _accumulate_usage(totals: dict[str, int], usage: dict[str, Any]) -> None:
+    for key in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"):
+        if key in usage and usage[key] is not None:
+            totals[key] = totals.get(key, 0) + int(usage[key])
+
+
+def _report_input_stats(selected_reports: list[dict]) -> dict[str, Any]:
+    rows_per_report: dict[str, int] = {}
+    total_rows = 0
+    for r in selected_reports:
+        rid = str(r.get("id") or "?")
+        df = r.get("data")
+        try:
+            n = len(df) if df is not None else 0
+        except TypeError:
+            n = 0
+        rows_per_report[rid] = n
+        total_rows += n
+    catalog = build_report_catalog(selected_reports)
+    catalog_json = json.dumps({"reports": catalog}, ensure_ascii=True, default=str)
+    return {
+        "report_catalog_json_chars": len(catalog_json),
+        "report_row_counts": rows_per_report,
+        "total_table_rows": total_rows,
+    }
+
+
+def _cost_estimate_usd(totals: dict[str, int]) -> float | None:
+    """Optional rough USD from env (per million tokens). Omit if unset."""
+    raw_in = os.getenv("ANTHROPIC_PRICE_INPUT_PER_M")
+    raw_out = os.getenv("ANTHROPIC_PRICE_OUTPUT_PER_M")
+    if not raw_in or not raw_out:
+        return None
+    try:
+        inp = float(raw_in)
+        out = float(raw_out)
+    except ValueError:
+        return None
+    if inp < 0 or out < 0:
+        return None
+    i = totals.get("input_tokens", 0) / 1_000_000.0 * inp
+    o = totals.get("output_tokens", 0) / 1_000_000.0 * out
+    return round(i + o, 6)
+
+
+def _usage_end_fields(totals: dict[str, int], api_calls: int) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "usage_totals": {
+            "input_tokens": totals.get("input_tokens", 0),
+            "output_tokens": totals.get("output_tokens", 0),
+            "cache_creation_input_tokens": totals.get("cache_creation_input_tokens", 0),
+            "cache_read_input_tokens": totals.get("cache_read_input_tokens", 0),
+        },
+        "api_calls": api_calls,
+    }
+    est = _cost_estimate_usd(totals)
+    if est is not None:
+        out["estimated_cost_usd"] = est
+    return out
 
 
 MAX_AGENT_STEPS = 10                                                         # Max tool-call turns per request (increased to handle SQL syntax errors during debugging)
@@ -148,6 +209,7 @@ def analyze_selected_reports(
 
         model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
         report_ids = [r.get("id") for r in selected_reports if r.get("id")]
+        report_stats = _report_input_stats(selected_reports)
 
         log_agent_event(
             "agent_run_start",
@@ -157,7 +219,13 @@ def analyze_selected_reports(
             report_ids=report_ids,
             max_steps=MAX_AGENT_STEPS,
             user_question_chars=len(user_question or ""),
+            prompt_body_chars=len(prompt),
+            effective_system_chars=len(effective_system),
+            **report_stats,
         )
+
+        usage_totals: dict[str, int] = {}
+        api_calls = 0
 
         tables = build_report_tables(selected_reports)
         tools = [build_explore_tool_schema()]
@@ -184,6 +252,8 @@ def analyze_selected_reports(
             messages.append({"role": "assistant", "content": message.content})
 
             usage = extract_usage_fields(message)
+            _accumulate_usage(usage_totals, usage)
+            api_calls += 1
             log_agent_event(
                 "agent_step_complete",
                 request_id=rid,
@@ -202,6 +272,7 @@ def analyze_selected_reports(
                         outcome="text_reply",
                         steps_used=step + 1,
                         reply_chars=len(text),
+                        **_usage_end_fields(usage_totals, api_calls),
                     )
                     return text, trace_buf, rid
                 log_agent_warning(
@@ -274,6 +345,7 @@ def analyze_selected_reports(
                 request_id=rid,
                 outcome="fallback_last_assistant",
                 reply_chars=len(fallback_text),
+                **_usage_end_fields(usage_totals, api_calls),
             )
             return fallback_text, trace_buf, rid
 
@@ -289,6 +361,8 @@ def analyze_selected_reports(
         )
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         usage = extract_usage_fields(forced_message)
+        _accumulate_usage(usage_totals, usage)
+        api_calls += 1
         log_agent_event(
             "agent_forced_final_call",
             request_id=rid,
@@ -302,9 +376,15 @@ def analyze_selected_reports(
                 request_id=rid,
                 outcome="forced_final_message",
                 reply_chars=len(forced_text),
+                **_usage_end_fields(usage_totals, api_calls),
             )
             return forced_text, trace_buf, rid
-        log_agent_warning("agent_run_end", request_id=rid, outcome="no_text")
+        log_agent_event(
+            "agent_run_end",
+            request_id=rid,
+            outcome="no_text",
+            **_usage_end_fields(usage_totals, api_calls),
+        )
         return "No response generated. The agent did not produce a final text answer.", trace_buf, rid
     finally:
         if collect_trace:
