@@ -21,7 +21,14 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from pydantic import BaseModel, Field
 
+from logs.agent_logging import configure_agent_logging
+from backend import session_store
 from backend.ai.cloud import analyze_selected_reports
+from backend.ai.prompts import (
+    AGENT_SYSTEM_PROMPT,
+    BUTTON_PROMPTS,
+    PROMPT_TEMPLATE_LABELS,
+)
 from backend.analytics.raw_reports import get_all_core_reports
 from backend.data.ga4_schema import CORE_REPORT_DIMENSIONS, CORE_REPORT_METRICS
 from backend.data.ga4_service import fetch_ga4_report, ga4_request_context
@@ -35,10 +42,15 @@ from backend.data.preprocess import ga4_to_dataframe
 ENV_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".env"))  # Local env file path for secrets.
 load_dotenv(dotenv_path=ENV_PATH)                                            # Load environment variables at startup.
 
+session_store.init_db()                                                      # SQLite backing for OAuth sessions (survives restarts).
+
+configure_agent_logging()                                                    # Structured JSON → stdout + logs/agent.jsonl
+
 app = FastAPI()                                                              # FastAPI app instance for the backend.
 
 OAUTH_SCOPES = ["https://www.googleapis.com/auth/analytics.readonly"]        # GA4 read-only scope for OAuth.
 SESSION_COOKIE = "ga4_session"                                               # Cookie name for session tracking.
+SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30                                   # 30 days; keep cookie across browser restarts.
 SESSIONS: dict[str, dict[str, Any]] = {}                                     # In-memory session store keyed by session_id.
 STATE_INDEX: dict[str, str] = {}                                             # Map OAuth state -> session_id for callbacks.
 
@@ -115,6 +127,25 @@ def _get_session_id(request: Request) -> str | None:                         # R
     return request.cookies.get(SESSION_COOKIE)                               # Return cookie value or None.
 
 
+# This function loads a session from memory or SQLite and refreshes the cache.
+def _get_session_dict(session_id: str) -> dict[str, Any] | None:             # Resolve session payload for a session id.
+    if session_id in SESSIONS:
+        return SESSIONS[session_id]
+    stored = session_store.load_session(session_id)
+    if stored is not None:
+        SESSIONS[session_id] = stored
+        return stored
+    return None
+
+
+# This function persists the current session to SQLite.
+def _persist_session(session_id: str) -> None:                               # Persist session payload after mutations.
+    session = SESSIONS.get(session_id)
+    if session is None:
+        return
+    session_store.save_session(session_id, session)
+
+
 # This function ensures a session exists and sets a cookie if needed.
 def _ensure_session_id(
     request: Request,                                                        # Incoming request for cookie lookup.
@@ -128,9 +159,14 @@ def _ensure_session_id(
             session_id,
             httponly=True,
             samesite="lax",
+            max_age=SESSION_COOKIE_MAX_AGE,
         )
-    if session_id not in SESSIONS:
         SESSIONS[session_id] = {}                                            # Initialize a new session dict.
+        _persist_session(session_id)
+    else:
+        if _get_session_dict(session_id) is None:
+            SESSIONS[session_id] = {}
+            _persist_session(session_id)
     return session_id                                                         # Return the active session id.
 
 
@@ -147,7 +183,9 @@ def _credentials_to_dict(credentials: Credentials) -> dict[str, Any]:        # F
 
 
 # This function reconstructs credentials and refreshes them if expired.
-def _build_user_credentials(session: dict[str, Any]) -> Credentials | None:  # Restore credentials from session.
+def _build_user_credentials(
+    session: dict[str, Any], session_id: str | None = None
+) -> Credentials | None:  # Restore credentials from session.
     data = session.get("credentials")                                        # Stored credential dict.
     if not data:
         return None                                                          # Return None when no credentials saved.
@@ -155,16 +193,20 @@ def _build_user_credentials(session: dict[str, Any]) -> Credentials | None:  # R
     if credentials.expired and credentials.refresh_token:
         credentials.refresh(GoogleAuthRequest())                             # Refresh tokens on demand.
         session["credentials"] = _credentials_to_dict(credentials)           # Persist refreshed credentials.
+        if session_id:
+            _persist_session(session_id)
     return credentials                                                        # Return valid Credentials object.
 
 
 # This function enforces that a user is authenticated and has a property selected.
 def _require_user_context(request: Request) -> tuple[Credentials, str]:      # Validate session and property.
     session_id = _get_session_id(request)                                    # Read current session id.
-    if not session_id or session_id not in SESSIONS:
+    if not session_id:
         raise HTTPException(status_code=401, detail="Not connected to GA4.")
-    session = SESSIONS[session_id]                                           # Session data for this user.
-    credentials = _build_user_credentials(session)                           # Credentials for GA4 API calls.
+    session = _get_session_dict(session_id)
+    if session is None:
+        raise HTTPException(status_code=401, detail="Not connected to GA4.")
+    credentials = _build_user_credentials(session, session_id)               # Credentials for GA4 API calls.
     if not credentials:
         raise HTTPException(status_code=401, detail="Not connected to GA4.")
     property_id = session.get("property_id")                                 # Selected GA4 property id.
@@ -198,6 +240,9 @@ class AnalyzeRequest(BaseModel):
     selected_reports: List[ReportPayload] = Field(default_factory=list)      # Reports selected for analysis.
     user_question: str                                                       # Natural-language user question.
     prompt_key: Optional[str] = None                                         # Optional template key for prompts.
+    prompt_template_override: Optional[str] = Field(default=None, max_length=120000)  # Full task prompt; replaces BUTTON_PROMPTS[prompt_key].
+    system_prompt_override: Optional[str] = Field(default=None, max_length=200000)   # Replaces AGENT_SYSTEM_PROMPT when non-empty.
+    include_agent_trace: bool = Field(default=True)                          # If true, return structured agent events for this run.
 
 
 # ------------------------------------------------------------------------------
@@ -224,6 +269,7 @@ def auth_login(request: Request):                                            # B
     response = RedirectResponse(authorization_url)                           # Redirect user to Google consent.
     session_id = _ensure_session_id(request, response)                       # Ensure a session and cookie.
     SESSIONS[session_id]["oauth_state"] = state                              # Save state to session.
+    _persist_session(session_id)
     STATE_INDEX[state] = session_id                                          # Map state to session for callback.
     return response                                                          # Return the redirect response.
 
@@ -233,9 +279,12 @@ def auth_login(request: Request):                                            # B
 def auth_callback(request: Request):                                         # Handle OAuth callback from Google.
     state = request.query_params.get("state")                                # OAuth state from query params.
     session_id = _get_session_id(request) or (STATE_INDEX.get(state) if state else None)
-    if not session_id or session_id not in SESSIONS:
+    if not session_id:
         raise HTTPException(status_code=400, detail="Invalid session.")
-    session = SESSIONS[session_id]                                           # Session for this callback.
+    session = _get_session_dict(session_id)
+    if session is None:
+        session = {}
+        SESSIONS[session_id] = session
     if state != session.get("oauth_state"):
         raise HTTPException(status_code=400, detail="Invalid OAuth state.")
 
@@ -243,12 +292,15 @@ def auth_callback(request: Request):                                         # H
     flow.fetch_token(authorization_response=str(request.url))                # Exchange auth code for tokens.
     session["credentials"] = _credentials_to_dict(flow.credentials)          # Persist credentials in session.
     session.pop("property_id", None)                                         # Clear any prior property selection.
+    session.pop("oauth_state", None)
+    _persist_session(session_id)
     response = RedirectResponse(f"{_get_frontend_url()}?connected=1")         # Redirect back to frontend.
     response.set_cookie(
         SESSION_COOKIE,
         session_id,
         httponly=True,
         samesite="lax",
+        max_age=SESSION_COOKIE_MAX_AGE,
     )
     return response                                                          # Return redirect with session cookie.
 
@@ -257,9 +309,11 @@ def auth_callback(request: Request):                                         # H
 @app.get("/api/auth/status")
 def auth_status(request: Request):                                           # Check current auth status.
     session_id = _get_session_id(request)                                    # Read session id from cookie.
-    if not session_id or session_id not in SESSIONS:
+    if not session_id:
         return {"connected": False}                                          # Return false when no session.
-    session = SESSIONS[session_id]                                           # Session data for this user.
+    session = _get_session_dict(session_id)
+    if session is None:
+        return {"connected": False}                                          # Return false when no session.
     return {"connected": bool(session.get("credentials"))}                   # Return true when credentials exist.
 
 
@@ -267,10 +321,12 @@ def auth_status(request: Request):                                           # C
 @app.get("/api/ga4/properties")
 def list_properties(request: Request):                                       # Fetch available GA4 properties.
     session_id = _get_session_id(request)                                    # Read session id from cookie.
-    if not session_id or session_id not in SESSIONS:
+    if not session_id:
         raise HTTPException(status_code=401, detail="Not connected to GA4.")
-    session = SESSIONS[session_id]                                           # Session data for this user.
-    credentials = _build_user_credentials(session)                           # Build credentials for API calls.
+    session = _get_session_dict(session_id)
+    if session is None:
+        raise HTTPException(status_code=401, detail="Not connected to GA4.")
+    credentials = _build_user_credentials(session, session_id)               # Build credentials for API calls.
     if not credentials:
         raise HTTPException(status_code=401, detail="Not connected to GA4.")
 
@@ -303,10 +359,13 @@ def select_property(
     payload: PropertySelection,                                              # Selected property payload.
 ):
     session_id = _get_session_id(request)                                    # Read session id from cookie.
-    if not session_id or session_id not in SESSIONS:
+    if not session_id:
         raise HTTPException(status_code=401, detail="Not connected to GA4.")
-    session = SESSIONS[session_id]                                           # Session data for this user.
+    session = _get_session_dict(session_id)
+    if session is None:
+        raise HTTPException(status_code=401, detail="Not connected to GA4.")
     session["property_id"] = payload.property_id                             # Store selection for later queries.
+    _persist_session(session_id)
     return {"selected": payload.property_id}                                 # Return selection confirmation.
 
 
@@ -389,6 +448,30 @@ def create_custom_report(
 # AI analysis endpoint
 # ------------------------------------------------------------------------------
 
+# Returns default system and template prompts for the UI editor.
+@app.get("/api/ai/prompt-catalog")
+def prompt_catalog() -> dict[str, Any]:
+    order = (
+        "traffic_quality_assessment",
+        "conversion_funnel_leakage",
+        "landing_page_optimization",
+        "insight_basis_explainer",
+        "insight_deep_dive_recommendations",
+    )
+    templates = []
+    for key in order:
+        if key not in BUTTON_PROMPTS:
+            continue
+        templates.append(
+            {
+                "key": key,
+                "label": PROMPT_TEMPLATE_LABELS.get(key, key),
+                "default_body": BUTTON_PROMPTS[key],
+            }
+        )
+    return {"agent_system_prompt": AGENT_SYSTEM_PROMPT, "templates": templates}
+
+
 # This endpoint runs AI analysis on selected reports and a user question.
 @app.post("/api/ai/analyze")
 def analyze(req: AnalyzeRequest) -> dict[str, Any]:                          # Run AI analysis on report data.
@@ -403,16 +486,24 @@ def analyze(req: AnalyzeRequest) -> dict[str, Any]:                          # R
             }
         )
 
+    rid = str(uuid4())
     try:
-        answer = analyze_selected_reports(
+        answer, agent_trace, request_id = analyze_selected_reports(
             selected_reports=reports,
             user_question=req.user_question,
             prompt_key=req.prompt_key,
+            prompt_template_override=req.prompt_template_override,
+            system_prompt_override=req.system_prompt_override,
+            request_id=rid,
+            collect_trace=req.include_agent_trace,
         )
     except Exception as exc:                                                 # Handle AI/prompt errors safely.
         raise HTTPException(status_code=500, detail=str(exc))
 
-    return {"answer": answer}                                                # Return AI response text to client.
+    out: dict[str, Any] = {"answer": answer, "request_id": request_id}
+    if req.include_agent_trace:
+        out["agent_trace"] = agent_trace
+    return out
 
 
 # ------------------------------------------------------------------------------

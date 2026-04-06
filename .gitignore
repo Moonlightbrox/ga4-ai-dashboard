@@ -24,3 +24,10 @@ Thumbs.db
 # test files
 run.bat
 notes/
+
+# Agent structured logs (keep logs/ package; ignore generated file)
+logs/agent.jsonl
+logs/*.log
+
+# OAuth session persistence (SQLite)
+backend/session_store.sqlite3

@@ -11,10 +11,79 @@ import {
   createCustomReport,
   selectProperty,
   runAnalysis,
+  type AgentTraceEvent,
   type ReportPayload,
   type ReportSchemaItem,
 } from "../lib/api";
+import { AiPromptSettings } from "../components/AiPromptSettings";
 import { exportToCSV } from "../lib/exportCsv";
+import { getAnalysisPromptExtras } from "../lib/promptStorage";
+
+const UI_STORAGE_KEY = "ga4-ai-dashboard:v1";
+const UI_STORAGE_KEY_LEGACY = "ga4-ai-dashboard:v2";
+
+type PersistedUiV1 = {
+  v: 1;
+  question: string;
+  answer: string | null;
+  agentLog: { request_id: string; agent_trace: AgentTraceEvent[] } | null;
+  savedAt: number;
+};
+
+type PersistedUiV2 = {
+  v: 2;
+  selectedPropertyId: string;
+  startDate: string;
+  endDate: string;
+  reports: ReportPayload[];
+  selectedReportIds: string[];
+  selectedDimensions: string[];
+  selectedMetrics: string[];
+  customReportName: string;
+  customReportGroup: string;
+  question: string;
+  answer: string | null;
+  agentLog: { request_id: string; agent_trace: AgentTraceEvent[] } | null;
+  savedAt: number;
+};
+
+function formatDateInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function defaultDateRange() {
+  const today = new Date();
+  const prior = new Date(today);
+  prior.setDate(today.getDate() - 30);
+  return { start: formatDateInput(prior), end: formatDateInput(today) };
+}
+
+function hasSessionDataToPersist(state: {
+  selectedPropertyId: string;
+  reports: ReportPayload[];
+  question: string;
+  answer: string | null;
+  agentLog: { request_id: string; agent_trace: AgentTraceEvent[] } | null;
+  selectedDimensions: string[];
+  selectedMetrics: string[];
+  customReportName: string;
+  customReportGroup: string;
+}): boolean {
+  return (
+    Boolean(state.selectedPropertyId.trim()) ||
+    state.reports.length > 0 ||
+    state.question.trim().length > 0 ||
+    state.answer != null ||
+    state.agentLog != null ||
+    state.selectedDimensions.length > 0 ||
+    state.selectedMetrics.length > 0 ||
+    Boolean(state.customReportName.trim()) ||
+    Boolean(state.customReportGroup.trim())
+  );
+}
 
 /* =============================================================================
  * Main Page Component: stateful dashboard with report loading and AI chat
@@ -28,13 +97,8 @@ export default function HomePage() {
    * -------------------------------------------------------------------------
    */
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";                 // Base URL for auth redirects to the backend.
-  const [startDate, setStartDate] = useState(() => {                          // Start date for report queries.
-    const today = new Date();                                                 // Current date used for default range.
-    const prior = new Date(today);                                            // Copy used to subtract days.
-    prior.setDate(today.getDate() - 30);                                      // Default window starts 30 days ago.
-    return formatDateInput(prior);                                            // Return ISO date string for input value.
-  });
-  const [endDate, setEndDate] = useState(() => formatDateInput(new Date()));   // End date for report queries.
+  const [startDate, setStartDate] = useState(() => defaultDateRange().start); // Start date for report queries.
+  const [endDate, setEndDate] = useState(() => defaultDateRange().end);       // End date for report queries.
   const [reports, setReports] = useState<ReportPayload[]>([]);                // Loaded report payloads from the API.
   const [selectedReportIds, setSelectedReportIds] = useState<string[]>([]);   // IDs of reports selected for tables/AI.
   const [connected, setConnected] = useState(false);                          // Current OAuth connection status.
@@ -45,6 +109,10 @@ export default function HomePage() {
   const [status, setStatus] = useState<string | null>(null);                  // Status/error message for UI feedback.
   const [question, setQuestion] = useState("");                               // Free-form AI question text.
   const [answer, setAnswer] = useState<string | null>(null);                  // Latest AI answer text.
+  const [agentLog, setAgentLog] = useState<{
+    request_id: string;
+    agent_trace: AgentTraceEvent[];
+  } | null>(null);                                                           // Structured agent events for the last run.
   const [isAsking, setIsAsking] = useState(false);                            // Whether an AI request is in flight.
   const [reportSchema, setReportSchema] = useState<{
     metrics: ReportSchemaItem[];
@@ -58,6 +126,7 @@ export default function HomePage() {
   const [customReportError, setCustomReportError] = useState<string | null>(null); // Error message for custom report creation.
   const [customReportSuccess, setCustomReportSuccess] = useState<string | null>(null); // Success message for custom report creation.
   const [isCreatingReport, setIsCreatingReport] = useState(false);            // Whether a custom report request is in flight.
+  const [persistReady, setPersistReady] = useState(false);                    // True after localStorage restore has run (avoids clobbering).
 
   const promptButtons = [                                                     // Prebuilt prompt options mapped to backend.
     { key: "traffic_quality_assessment", label: "Traffic quality assessment" },
@@ -112,6 +181,155 @@ export default function HomePage() {
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      let raw = localStorage.getItem(UI_STORAGE_KEY);
+      if (!raw) raw = localStorage.getItem(UI_STORAGE_KEY_LEGACY);
+      if (!raw) {
+        setPersistReady(true);
+        return;
+      }
+      const parsed = JSON.parse(raw) as PersistedUiV1 | PersistedUiV2;
+      if (parsed.v === 1) {
+        if (typeof parsed.question === "string") setQuestion(parsed.question);
+        if (parsed.answer !== undefined) setAnswer(parsed.answer);
+        if (parsed.agentLog !== undefined) setAgentLog(parsed.agentLog);
+      } else if (parsed.v === 2) {
+        if (typeof parsed.selectedPropertyId === "string") setSelectedPropertyId(parsed.selectedPropertyId);
+        if (typeof parsed.startDate === "string") setStartDate(parsed.startDate);
+        if (typeof parsed.endDate === "string") setEndDate(parsed.endDate);
+        if (Array.isArray(parsed.reports)) setReports(parsed.reports);
+        if (Array.isArray(parsed.selectedReportIds)) {
+          const ids = new Set((parsed.reports ?? []).map((r) => r.id));
+          const next = parsed.selectedReportIds.filter((id) => ids.has(id));
+          setSelectedReportIds(
+            next.length > 0 ? next : (parsed.reports ?? []).map((r) => r.id)
+          );
+        }
+        if (Array.isArray(parsed.selectedDimensions)) setSelectedDimensions(parsed.selectedDimensions);
+        if (Array.isArray(parsed.selectedMetrics)) setSelectedMetrics(parsed.selectedMetrics);
+        if (typeof parsed.customReportName === "string") setCustomReportName(parsed.customReportName);
+        if (typeof parsed.customReportGroup === "string") setCustomReportGroup(parsed.customReportGroup);
+        if (typeof parsed.question === "string") setQuestion(parsed.question);
+        if (parsed.answer !== undefined) setAnswer(parsed.answer);
+        if (parsed.agentLog !== undefined) setAgentLog(parsed.agentLog);
+      }
+    } catch {
+      /* ignore corrupt storage */
+    }
+    setPersistReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !persistReady) return;
+    const snapshot = {
+      selectedPropertyId,
+      reports,
+      question,
+      answer,
+      agentLog,
+      selectedDimensions,
+      selectedMetrics,
+      customReportName,
+      customReportGroup,
+    };
+    if (!hasSessionDataToPersist(snapshot)) {
+      try {
+        localStorage.removeItem(UI_STORAGE_KEY);
+        localStorage.removeItem(UI_STORAGE_KEY_LEGACY);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    try {
+      const reportIdSet = new Set(reports.map((r) => r.id));
+      const selectedReportIdsSafe = selectedReportIds.filter((id) => reportIdSet.has(id));
+      const payload: PersistedUiV2 = {
+        v: 2,
+        selectedPropertyId,
+        startDate,
+        endDate,
+        reports,
+        selectedReportIds: selectedReportIdsSafe,
+        selectedDimensions,
+        selectedMetrics,
+        customReportName,
+        customReportGroup,
+        question,
+        answer,
+        agentLog,
+        savedAt: Date.now(),
+      };
+      localStorage.setItem(UI_STORAGE_KEY, JSON.stringify(payload));
+      try {
+        localStorage.removeItem(UI_STORAGE_KEY_LEGACY);
+      } catch {
+        /* ignore */
+      }
+    } catch {
+      setStatus("Could not save session in browser storage (data may be too large). Try clearing old data.");
+    }
+  }, [
+    persistReady,
+    selectedPropertyId,
+    startDate,
+    endDate,
+    reports,
+    selectedReportIds,
+    selectedDimensions,
+    selectedMetrics,
+    customReportName,
+    customReportGroup,
+    question,
+    answer,
+    agentLog,
+  ]);
+
+  useEffect(() => {
+    if (!persistReady || !connected || !selectedPropertyId.trim()) return;
+    selectProperty(selectedPropertyId).catch(() => {
+      /* property may be invalid or session expired */
+    });
+  }, [persistReady, connected, selectedPropertyId]);
+
+  function handleClearSavedSession() {
+    const { start, end } = defaultDateRange();
+    setStartDate(start);
+    setEndDate(end);
+    setSelectedPropertyId("");
+    setReports([]);
+    setSelectedReportIds([]);
+    setSelectedDimensions([]);
+    setSelectedMetrics([]);
+    setCustomReportName("");
+    setCustomReportGroup("");
+    setQuestion("");
+    setAnswer(null);
+    setAgentLog(null);
+    setCustomReportError(null);
+    setCustomReportSuccess(null);
+    try {
+      localStorage.removeItem(UI_STORAGE_KEY);
+      localStorage.removeItem(UI_STORAGE_KEY_LEGACY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const showClearSavedSession =
+    hasSessionDataToPersist({
+      selectedPropertyId,
+      reports,
+      question,
+      answer,
+      agentLog,
+      selectedDimensions,
+      selectedMetrics,
+      customReportName,
+      customReportGroup,
+    });
+
   /* -------------------------------------------------------------------------
    * Report loading and selection handlers
    * -------------------------------------------------------------------------
@@ -142,6 +360,14 @@ export default function HomePage() {
     );                                                                        // Add or remove the report id.
   }
 
+  function selectAllReports() {
+    setSelectedReportIds(reports.map((r) => r.id));
+  }
+
+  function unselectAllReports() {
+    setSelectedReportIds([]);
+  }
+
   const visibleReports = reports.filter((report) => selectedReportIds.includes(report.id));  // Reports active for tables/AI.
   const canAsk = visibleReports.length > 0 && question.trim().length > 0 && !isAsking;        // Eligibility for AI question.
   const canCreateCustomReport =
@@ -157,12 +383,18 @@ export default function HomePage() {
     if (!canAsk) return;                                                      // Exit when input or state is invalid.
     setIsAsking(true);
     setAnswer(null);
+    setAgentLog(null);
     try {
       const result = await runAnalysis({                                      // AI analysis response for the question.
         selected_reports: visibleReports,
         user_question: question.trim(),
+        ...getAnalysisPromptExtras(null),
       });
       setAnswer(result.answer);                                               // Store the AI response for display.
+      setAgentLog({
+        request_id: result.request_id,
+        agent_trace: result.agent_trace ?? [],
+      });
     } catch (err) {                                                           // Handle AI request errors from backend.
       setAnswer((err as Error).message);
     } finally {
@@ -178,14 +410,20 @@ export default function HomePage() {
     if (visibleReports.length === 0 || isAsking) return;                      // Exit when no reports or busy.
     setIsAsking(true);
     setAnswer(null);
+    setAgentLog(null);
     setQuestion(label);                                                       // Mirror the button label in the textbox.
     try {
       const result = await runAnalysis({                                      // AI analysis response for the template.
         selected_reports: visibleReports,
         user_question: label,
         prompt_key: promptKey,
+        ...getAnalysisPromptExtras(promptKey),
       });
       setAnswer(result.answer);                                               // Store the AI response for display.
+      setAgentLog({
+        request_id: result.request_id,
+        agent_trace: result.agent_trace ?? [],
+      });
     } catch (err) {                                                           // Handle AI request errors from backend.
       setAnswer((err as Error).message);
     } finally {
@@ -381,7 +619,19 @@ export default function HomePage() {
       </section>
 
       <section>
-        <h2>Active reports</h2>
+        <div className="report-select-toolbar">
+          <h2>Active reports</h2>
+          {reports.length > 0 && (
+            <div className="report-select-actions">
+              <button type="button" onClick={selectAllReports}>
+                Select all
+              </button>
+              <button type="button" onClick={unselectAllReports}>
+                Unselect all
+              </button>
+            </div>
+          )}
+        </div>
         {reports.length === 0 ? (
           <p>Load reports to choose which ones appear in tables and AI analysis.</p>
         ) : (
@@ -410,12 +660,7 @@ export default function HomePage() {
         )}
       </section>
 
-      <section>
-        <h2>Landing pages</h2>
-        <LandingPageHighlights
-          report={reports.find((report) => report.id === "landing_pages")}
-        />
-      </section>
+      <AiPromptSettings />
 
       <section>
         <h2>Ask AI</h2>
@@ -451,8 +696,20 @@ export default function HomePage() {
               <button type="button" onClick={handleAsk} disabled={!canAsk}>
                 {isAsking ? "Asking..." : "Ask AI"}
               </button>
+              {showClearSavedSession && (
+                <button type="button" className="chat-actions-secondary" onClick={handleClearSavedSession}>
+                  Clear saved session
+                </button>
+              )}
             </div>
-            {answer && <AnswerRenderer answer={answer} selectedReports={visibleReports} />}
+            {answer && (
+              <AnswerRenderer
+                answer={answer}
+                selectedReports={visibleReports}
+                agentLog={agentLog}
+                onAgentLog={setAgentLog}
+              />
+            )}
           </div>
         )}
       </section>
@@ -573,14 +830,6 @@ function ReportsContainer({ reports }: { reports: ReportPayload[] }) {        //
  * =============================================================================
  */
 
-// Formats a Date object into an ISO string suitable for date inputs.
-function formatDateInput(date: Date) {                                        // date: Date object to format for inputs.
-  const year = date.getFullYear();                                            // Year component for the date string.
-  const month = String(date.getMonth() + 1).padStart(2, "0");                 // Month component with leading zero.
-  const day = String(date.getDate()).padStart(2, "0");                        // Day component with leading zero.
-  return `${year}-${month}-${day}`;                                           // Return ISO date value for inputs.
-}
-
 // Sanitizes a string so it can be safely used in filenames.
 function sanitizeFilenamePart(value: string) {                                // value: raw label to be used in filenames.
   return value                                                                // Return a filename-safe version of the text.
@@ -610,6 +859,10 @@ const parseMaybeNumber = (value: unknown) => {
     return value;
   }
   if (typeof value === "string") {
+    const fromAnswer = parseAnswerNumber(value);
+    if (fromAnswer !== null) {
+      return fromAnswer;
+    }
     const normalized = value.replace(/,/g, "").trim();
     if (!normalized) {
       return null;
@@ -620,27 +873,80 @@ const parseMaybeNumber = (value: unknown) => {
   return null;
 };
 
-const compareValues = (a: unknown, b: unknown) => {
+/** Column header or metric name hints that values may mix 0–1 fractions with 1–100 percent points. */
+function isLikelyPercentSortColumn(columnKey: string | undefined) {
+  if (!columnKey) return false;
+  const lower = columnKey.toLowerCase();
+  if (lower.includes("%")) return true;
+  return (
+    /\b(percent|percentage|bounce|conversion|ctr|proportion|ratio|share)\b/i.test(columnKey) ||
+    /\b(bounce|exit|conversion|engagement|click|churn)\s+rate\b/i.test(lower)
+  );
+}
+
+/**
+ * Aligns mixed percentage scales for sorting: e.g. 0.97 (97% as fraction) vs 1.56 (1.56% as points).
+ * Without this, 1.56 sorts above 0.97 numerically.
+ */
+function normalizePercentPairForSort(a: number, b: number): [number, number] {
+  const aUnit = a >= 0 && a <= 1;
+  const bUnit = b >= 0 && b <= 1;
+  if (aUnit && bUnit) return [a * 100, b * 100];
+  if (aUnit && !bUnit) return [a * 100, b];
+  if (!aUnit && bUnit) return [a, b * 100];
+  return [a, b];
+}
+
+function shouldNormalizePercentPair(
+  aRaw: string,
+  bRaw: string,
+  columnKey: string | undefined
+): boolean {
+  if (isLikelyPercentSortColumn(columnKey)) return true;
+  if (aRaw.includes("%") || bRaw.includes("%")) return true;
+  return false;
+}
+
+/** Same signals as pair-normalize, for a single cell (bar width / column max). */
+function shouldNormalizePercentBar(raw: string, columnHeader: string): boolean {
+  return isLikelyPercentSortColumn(columnHeader) || raw.includes("%");
+}
+
+/**
+ * Maps parsed numbers to a 0–100 style scale for bar length when the column mixes
+ * decimal fractions (0.97 = 97%) with percent points (1.56 = 1.56%).
+ */
+function normalizeParsedForPercentBar(
+  parsed: number,
+  raw: string,
+  columnHeader: string
+): number {
+  if (!shouldNormalizePercentBar(raw, columnHeader)) return parsed;
+  if (parsed >= 0 && parsed <= 1) return parsed * 100;
+  return parsed;
+}
+
+const compareValues = (a: unknown, b: unknown, columnKey?: string) => {
   if (a == null && b == null) return 0;
   if (a == null) return 1;
   if (b == null) return -1;
 
+  const aStr = String(a);
+  const bStr = String(b);
   const aNum = parseMaybeNumber(a);
   const bNum = parseMaybeNumber(b);
   if (aNum != null && bNum != null) {
+    if (shouldNormalizePercentPair(aStr, bStr, columnKey)) {
+      const [an, bn] = normalizePercentPairForSort(aNum, bNum);
+      return an - bn;
+    }
     return aNum - bNum;
   }
 
-  return String(a).localeCompare(String(b), undefined, {
+  return aStr.localeCompare(bStr, undefined, {
     numeric: true,
     sensitivity: "base",
   });
-};
-
-const pickFirstKey = (rows: ReportPayload["data"], candidates: string[]) => {
-  if (!rows.length) return null;
-  const keys = new Set(Object.keys(rows[0] ?? {}));
-  return candidates.find((key) => keys.has(key)) ?? null;
 };
 
 // Renders a single report panel with actions and a data table.
@@ -664,7 +970,7 @@ function ReportPanel({
     const multiplier = sortConfig.direction === "asc" ? 1 : -1;
     const rowsWithIndex = rows.map((row, index) => ({ row, index }));
     rowsWithIndex.sort((left, right) => {
-      const order = compareValues(left.row[sortConfig.key], right.row[sortConfig.key]);
+      const order = compareValues(left.row[sortConfig.key], right.row[sortConfig.key], sortConfig.key);
       if (order !== 0) {
         return order * multiplier;
       }
@@ -775,135 +1081,6 @@ type AnswerBlock =
   | { type: "list"; items: string[] }
   | { type: "table"; headers: string[]; rows: string[][] };
 
-type LandingMetricBlock = {
-  title: string;
-  rows: { label: string; value: string }[];
-};
-
-function LandingPageHighlights({ report }: { report?: ReportPayload }) {
-  if (!report) {
-    return <p>Load reports to view landing page highlights.</p>;
-  }
-  if (!report.data?.length) {
-    return <p>No landing page data available.</p>;
-  }
-
-  const pageKey = pickFirstKey(report.data, [
-    "Landing Page",
-    "landingPage",
-    "Page",
-    "page",
-  ]);
-  const revenueKey = pickFirstKey(report.data, [
-    "Purchase Revenue",
-    "purchaseRevenue",
-    "Revenue",
-    "revenue",
-  ]);
-  const revenuePerSessionKey = pickFirstKey(report.data, [
-    "Revenue per Session",
-    "revenue_per_session",
-  ]);
-
-  if (!pageKey || !revenueKey || !revenuePerSessionKey) {
-    return (
-      <p>
-        Landing page metrics require page, revenue, and revenue per session fields.
-      </p>
-    );
-  }
-
-  const buildRankedRows = (
-    valueKey: string,
-    direction: "asc" | "desc",
-    limit: number,
-    excludeZero: boolean
-  ) => {
-    const ranked = report.data
-      .map((row) => ({
-        label: String(row[pageKey] ?? ""),
-        rawValue: row[valueKey],
-        numericValue: parseMaybeNumber(row[valueKey]),
-      }))
-      .filter((row) => row.label.trim().length > 0)
-      .filter((row) => {
-        if (!excludeZero) return true;
-        if (row.numericValue == null) return true;
-        return row.numericValue !== 0;
-      })
-      .sort((a, b) => {
-        const order = compareValues(a.rawValue, b.rawValue);
-        return direction === "asc" ? order : -order;
-      })
-      .slice(0, limit)
-      .map((row) => ({
-        label: row.label,
-        value: String(row.rawValue ?? ""),
-      }));
-
-    return ranked;
-  };
-
-  const blocks: LandingMetricBlock[] = [
-    {
-      title: "Top 5 revenue pages",
-      rows: buildRankedRows(revenueKey, "desc", 5, false),
-    },
-    {
-      title: "Top 5 revenue per session pages",
-      rows: buildRankedRows(revenuePerSessionKey, "desc", 5, false),
-    },
-    {
-      title: "Bottom 5 revenue pages",
-      rows: buildRankedRows(revenueKey, "asc", 5, true),
-    },
-    {
-      title: "Bottom 5 revenue per session pages",
-      rows: buildRankedRows(revenuePerSessionKey, "asc", 5, true),
-    },
-  ];
-
-  return (
-    <div className="report-block">
-      <div className="report-title">
-        <div className="report-title-row">
-          <strong>Landing page highlights</strong>
-        </div>
-        <span>Computed from the landing pages report.</span>
-      </div>
-      <div className="report-table-wrap">
-        <div className="landing-metric-grid">
-          {blocks.map((block) => (
-            <div key={block.title} className="landing-metric-card">
-              <h3>{block.title}</h3>
-              {block.rows.length === 0 ? (
-                <p>No rows available.</p>
-              ) : (
-                <table className="report-table">
-                  <thead>
-                    <tr>
-                      <th>Page</th>
-                      <th>Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {block.rows.map((row, idx) => (
-                      <tr key={`${block.title}-${idx}`}>
-                        <td>{row.label}</td>
-                        <td>{row.value}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 type InsightFollowupAction = "basis" | "deep_dive";
 
 type InsightFollowupState = {
@@ -924,6 +1101,17 @@ function isTableSeparator(line: string) {
   return /^\s*\|?[-:\s|]+\|?\s*$/.test(line);
 }
 
+function isBulletLine(line: string) {
+  return /^[-*]\s+/.test(line) || line.startsWith("•");
+}
+
+function cleanAnswerText(value: string) {
+  return value
+    .replace(/^\*{1,3}\s*/, "")
+    .replace(/\s*\*{1,3}$/, "")
+    .trim();
+}
+
 function parseAnswerBlocks(answer: string): AnswerBlock[] {
   const lines = answer.split(/\r?\n/);
   const blocks: AnswerBlock[] = [];
@@ -937,10 +1125,15 @@ function parseAnswerBlocks(answer: string): AnswerBlock[] {
       continue;
     }
 
+    if (/^[-*]{3,}$/.test(trimmed)) {
+      i += 1;
+      continue;
+    }
+
     if (trimmed.startsWith("##")) {
       blocks.push({
         type: "heading",
-        text: trimmed.replace(/^#+\s*/, ""),
+        text: cleanAnswerText(trimmed.replace(/^#+\s*/, "")),
       });
       i += 1;
       continue;
@@ -959,14 +1152,14 @@ function parseAnswerBlocks(answer: string): AnswerBlock[] {
       continue;
     }
 
-    if (trimmed.startsWith("- ") || trimmed.startsWith("•")) {
+    if (isBulletLine(trimmed)) {
       const items: string[] = [];
       while (i < lines.length) {
         const itemLine = lines[i].trim();
-        if (!itemLine.startsWith("- ") && !itemLine.startsWith("•")) break;
+        if (!isBulletLine(itemLine)) break;
         const parts = itemLine
-          .split(/\s+-\s+|\s+•\s+|•/)
-          .map((part) => part.replace(/^[-•]\s*/, "").trim())
+          .split(/\s+[-*]\s+|\s+•\s+|•/)
+          .map((part) => cleanAnswerText(part.replace(/^[-*•]\s*/, "")))
           .filter(Boolean);
         items.push(...parts);
         i += 1;
@@ -978,7 +1171,7 @@ function parseAnswerBlocks(answer: string): AnswerBlock[] {
     if (trimmed.includes("•")) {
       const items = trimmed
         .split(/\s+•\s+|•/)
-        .map((part) => part.replace(/^[-•]\s*/, "").trim())
+        .map((part) => cleanAnswerText(part.replace(/^[-*•]\s*/, "")))
         .filter(Boolean);
       if (items.length > 1) {
         blocks.push({ type: "list", items });
@@ -991,11 +1184,12 @@ function parseAnswerBlocks(answer: string): AnswerBlock[] {
     while (i < lines.length) {
       const paraLine = lines[i].trim();
       if (!paraLine) break;
+      if (/^[-*]{3,}$/.test(paraLine)) break;
       if (paraLine.startsWith("##")) break;
       const lookahead = lines[i + 1]?.trim() ?? "";
       if (paraLine.includes("|") && isTableSeparator(lookahead)) break;
-      if (paraLine.startsWith("- ")) break;
-      paragraphLines.push(paraLine);
+      if (isBulletLine(paraLine)) break;
+      paragraphLines.push(cleanAnswerText(paraLine));
       i += 1;
     }
     blocks.push({ type: "paragraph", text: paragraphLines.join(" ") });
@@ -1004,12 +1198,62 @@ function parseAnswerBlocks(answer: string): AnswerBlock[] {
   return blocks;
 }
 
+function AgentLogToolbar({
+  agentLog,
+}: {
+  agentLog: { request_id: string; agent_trace: AgentTraceEvent[] };
+}) {
+  const [open, setOpen] = useState(false);
+  function download() {
+    const blob = new Blob(
+      [
+        JSON.stringify(
+          { request_id: agentLog.request_id, agent_trace: agentLog.agent_trace },
+          null,
+          2
+        ),
+      ],
+      { type: "application/json;charset=utf-8" }
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `agent-trace-${agentLog.request_id.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  return (
+    <div className="agent-log-toolbar">
+      <span className="agent-log-meta" title={agentLog.request_id}>
+        Agent run <code>{agentLog.request_id.slice(0, 8)}</code>…
+      </span>
+      <button type="button" className="agent-log-toggle" onClick={() => setOpen((o) => !o)}>
+        {open ? "Hide log" : "View log"}
+      </button>
+      <button type="button" className="agent-log-download" onClick={download}>
+        Download JSON
+      </button>
+      {open && (
+        <pre className="agent-log-pre">
+          {agentLog.agent_trace.length > 0
+            ? JSON.stringify(agentLog.agent_trace, null, 2)
+            : "(No structured events; enable include_agent_trace or check server logs.)"}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function AnswerRenderer({
   answer,
   selectedReports,
+  agentLog,
+  onAgentLog,
 }: {
   answer: string;
   selectedReports: ReportPayload[];
+  agentLog: { request_id: string; agent_trace: AgentTraceEvent[] } | null;
+  onAgentLog: (log: { request_id: string; agent_trace: AgentTraceEvent[] }) => void;
 }) {
   const blocks = useMemo(() => parseAnswerBlocks(answer), [answer]);
   const [insightFollowups, setInsightFollowups] = useState<Record<string, InsightFollowupState>>({});
@@ -1041,6 +1285,11 @@ function AnswerRenderer({
         selected_reports: selectedReports,
         user_question: insightText,
         prompt_key: promptKey,
+        ...getAnalysisPromptExtras(promptKey),
+      });
+      onAgentLog({
+        request_id: result.request_id,
+        agent_trace: result.agent_trace ?? [],
       });
       setInsightFollowups((prev) => ({
         ...prev,
@@ -1067,6 +1316,7 @@ function AnswerRenderer({
   let activeSection = "";
   return (
     <div className="answer">
+      {agentLog && <AgentLogToolbar agentLog={agentLog} />}
       {blocks.map((block, index) => {
         if (block.type === "heading") {
           activeSection = block.text.trim().toLowerCase();
@@ -1203,9 +1453,10 @@ function AnswerTable({
     const multiplier = sortConfig.direction === "asc" ? 1 : -1;
     const rowsWithIndex = block.rows.map((row, index) => ({ row, index }));
     rowsWithIndex.sort((left, right) => {
-      const leftValue = left.row[sortConfig.colIdx] ?? "";
-      const rightValue = right.row[sortConfig.colIdx] ?? "";
-      const order = compareValues(leftValue, rightValue);
+      const leftValue = String(left.row[sortConfig.colIdx] ?? "");
+      const rightValue = String(right.row[sortConfig.colIdx] ?? "");
+      const header = block.headers[sortConfig.colIdx] ?? "";
+      const order = compareAnswerCellValues(leftValue, rightValue, header);
       if (order !== 0) {
         return order * multiplier;
       }
@@ -1216,13 +1467,14 @@ function AnswerTable({
 
   const columnMaxes = useMemo(
     () =>
-      block.headers.map((_, colIdx) => {
+      block.headers.map((header, colIdx) => {
         let max = 0;
         block.rows.forEach((row) => {
-          const value = parseAnswerNumber(row[colIdx] ?? "");
-          if (value !== null && value > max) {
-            max = value;
-          }
+          const raw = String(row[colIdx] ?? "");
+          const value = parseAnswerNumber(raw);
+          if (value === null) return;
+          const scaled = normalizeParsedForPercentBar(value, raw, header);
+          if (scaled > max) max = scaled;
         });
         return max;
       }),
@@ -1293,6 +1545,12 @@ function parseAnswerNumber(raw: string) {
   if (duration !== null) {
     return duration;
   }
+  const trimmed = raw.trim();
+  const secondsSuffix = trimmed.match(/^([\d,.]+)\s*(s|sec|secs|second|seconds)\s*$/i);
+  if (secondsSuffix) {
+    const n = Number(secondsSuffix[1].replace(/,/g, ""));
+    if (Number.isFinite(n)) return n;
+  }
   const normalized = raw
     .replace(/[%,$]/g, "")
     .replace(/\s+/g, "")
@@ -1301,15 +1559,45 @@ function parseAnswerNumber(raw: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * Parses clock-like durations for answer tables.
+ * - H:MM:SS — hours, minutes, seconds (minutes/seconds 0–59)
+ * - M:SS or MM:SS or 90:00 — total minutes : seconds (second part 0–59); common for engagement
+ */
 function parseDurationToSeconds(raw: string) {
   const trimmed = raw.trim();
-  const match = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-  if (!match) return null;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  const seconds = Number(match[3] ?? 0);
-  if ([hours, minutes, seconds].some((value) => Number.isNaN(value))) return null;
-  return hours * 3600 + minutes * 60 + seconds;
+  const three = trimmed.match(/^(\d+):(\d{2}):(\d{2})$/);
+  if (three) {
+    const h = Number(three[1]);
+    const m = Number(three[2]);
+    const s = Number(three[3]);
+    if ([h, m, s].some((v) => Number.isNaN(v)) || m > 59 || s > 59) return null;
+    return h * 3600 + m * 60 + s;
+  }
+  const two = trimmed.match(/^(\d+):(\d{2})$/);
+  if (two) {
+    const minutes = Number(two[1]);
+    const seconds = Number(two[2]);
+    if (Number.isNaN(minutes) || Number.isNaN(seconds) || seconds > 59) return null;
+    return minutes * 60 + seconds;
+  }
+  return null;
+}
+
+/** Sort answer table cells using the same numeric rules as bars (%, duration, plain numbers). */
+function compareAnswerCellValues(a: string, b: string, columnHeader?: string) {
+  const an = parseAnswerNumber(a);
+  const bn = parseAnswerNumber(b);
+  if (an !== null && bn !== null) {
+    if (shouldNormalizePercentPair(a, b, columnHeader)) {
+      const [anN, bnN] = normalizePercentPairForSort(an, bn);
+      return anN - bnN;
+    }
+    return an - bn;
+  }
+  if (an !== null && bn === null) return -1;
+  if (an === null && bn !== null) return 1;
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
 
 function columnKind(name: string) {
@@ -1318,9 +1606,33 @@ function columnKind(name: string) {
   if (lower.includes("conversion")) return "conversion";
   if (lower.includes("bounce")) return "bounce";
   if (lower.includes("session length")) return "session-length";
+  if (lower.includes("engagement") && lower.includes("duration")) return "session-length";
+  if (lower.includes("duration") && lower.includes("per session")) return "session-length";
   if (lower.includes("session")) return "sessions";
   if (lower.includes("user")) return "users";
   return "generic";
+}
+
+function formatPercentageValue(value: string, columnName: string): string {
+  const lower = columnName.toLowerCase();
+  const isRateColumn = lower.includes("bounce") || lower.includes("conversion");
+  if (!isRateColumn) return value;
+  
+  const numericValue = parseAnswerNumber(value);
+  if (numericValue === null) return value;
+  
+  // If value is between 0 and 1, it's a decimal (0.85) - convert to percentage (85%)
+  // If value is between 1 and 100, it's already a percentage (85) - just add %
+  // If value is > 100, it might already have % symbol or be formatted
+  if (numericValue >= 0 && numericValue <= 1) {
+    return `${(numericValue * 100).toFixed(2)}%`;
+  } else if (numericValue > 1 && numericValue <= 100) {
+    // Check if value already has % symbol
+    if (value.includes("%")) return value;
+    return `${numericValue.toFixed(2)}%`;
+  }
+  
+  return value;
 }
 
 function AnswerCell({
@@ -1333,18 +1645,25 @@ function AnswerCell({
   maxValue: number;
 }) {
   const numericValue = parseAnswerNumber(value);
-  const ratio = maxValue > 0 && numericValue !== null ? Math.min(numericValue / maxValue, 1) : 0;
+  const barValue =
+    numericValue === null
+      ? null
+      : normalizeParsedForPercentBar(numericValue, value, columnName);
+  const ratio = maxValue > 0 && barValue !== null ? Math.min(barValue / maxValue, 1) : 0;
   const kind = columnKind(columnName);
   const showBar = numericValue !== null;
+  const formattedValue = formatPercentageValue(value, columnName);
+  
   return (
     <td className={showBar ? "answer-bar-cell" : undefined}>
       {showBar ? (
         <div className={`answer-bar answer-bar-${kind}`} style={{ ["--fill" as never]: ratio }}>
-          <span>{value}</span>
+          <span>{formattedValue}</span>
         </div>
       ) : (
-        value
+        formattedValue
       )}
     </td>
   );
 }
+

@@ -77,13 +77,43 @@ export async function selectProperty(propertyId: string) {
   });
 }
 
+export type AgentTraceEvent = Record<string, unknown>;
+
+export type AnalysisResponse = {
+  answer: string;
+  request_id: string;
+  agent_trace?: AgentTraceEvent[];
+};
+
+export type PromptTemplateCatalogItem = {
+  key: string;
+  label: string;
+  default_body: string;
+};
+
+export type PromptCatalog = {
+  agent_system_prompt: string;
+  templates: PromptTemplateCatalogItem[];
+};
+
+export async function fetchPromptCatalog() {
+  return request<PromptCatalog>("/api/ai/prompt-catalog");
+}
+
 export async function runAnalysis(payload: {
-  selected_reports: ReportPayload[];                                         // Reports included in the AI prompt.
-  user_question: string;                                                     // Question to ask the AI.
-  prompt_key?: string | null;                                                // Optional prompt template key.
+  selected_reports: ReportPayload[];
+  user_question: string;
+  prompt_key?: string | null;
+  prompt_template_override?: string | null;
+  system_prompt_override?: string | null;
+  include_agent_trace?: boolean;
 }) {
-  return request<{ answer: string }>("/api/ai/analyze", {
+  const body = {
+    ...payload,
+    include_agent_trace: payload.include_agent_trace ?? true,
+  };
+  return request<AnalysisResponse>("/api/ai/analyze", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
 }
