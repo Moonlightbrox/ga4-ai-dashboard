@@ -10,6 +10,7 @@ import {
   fetchReportSchema,
   createCustomReport,
   selectProperty,
+  linkBigQueryExport,
   runAnalysis,
   type AgentTraceEvent,
   type ReportPayload,
@@ -127,6 +128,9 @@ export default function HomePage() {
   const [customReportSuccess, setCustomReportSuccess] = useState<string | null>(null); // Success message for custom report creation.
   const [isCreatingReport, setIsCreatingReport] = useState(false);            // Whether a custom report request is in flight.
   const [persistReady, setPersistReady] = useState(false);                    // True after localStorage restore has run (avoids clobbering).
+  const [bqLinkMessage, setBqLinkMessage] = useState<string | null>(null);    // Managed BigQuery export status or error.
+  const [bqLinkLoading, setBqLinkLoading] = useState(false);                  // BigQuery link request in flight.
+  const [bqStreaming, setBqStreaming] = useState(false);                      // Optional streaming export when linking.
 
   const promptButtons = [                                                     // Prebuilt prompt options mapped to backend.
     { key: "traffic_quality_assessment", label: "Traffic quality assessment" },
@@ -492,6 +496,24 @@ export default function HomePage() {
     return `${item.label} - ${item.description} (${item.id})`;                // Return combined label for display.
   }
 
+  async function handleLinkBigQueryExport() {
+    setBqLinkMessage(null);
+    if (!selectedPropertyId.trim()) {
+      setBqLinkMessage("Select a GA4 property first.");
+      return;
+    }
+    setBqLinkLoading(true);
+    try {
+      const result = await linkBigQueryExport({ streaming_export: bqStreaming });
+      setBqLinkMessage(
+        `${result.message} Grant: ${result.grant.status}. Link: ${result.bigquery_link.status}.`
+      );
+    } catch (err) {
+      setBqLinkMessage((err as Error).message || "BigQuery link failed.");
+    } finally {
+      setBqLinkLoading(false);
+    }
+  }
 
   return (                                                                   // Render the main dashboard layout.
     <main>
@@ -526,6 +548,24 @@ export default function HomePage() {
                 ))}
               </select>
             </label>
+            <div className="stack">
+              <label className="row">
+                <input
+                  type="checkbox"
+                  checked={bqStreaming}
+                  onChange={(e) => setBqStreaming(e.target.checked)}
+                />
+                Enable streaming export (optional; may increase cost)
+              </label>
+              <button
+                type="button"
+                onClick={handleLinkBigQueryExport}
+                disabled={bqLinkLoading || !selectedPropertyId.trim()}
+              >
+                {bqLinkLoading ? "Linking BigQuery…" : "Link GA4 export to our BigQuery"}
+              </button>
+              {bqLinkMessage && <p className="form-success">{bqLinkMessage}</p>}
+            </div>
           </div>
         )}
       </section>

@@ -77,6 +77,33 @@ export async function selectProperty(propertyId: string) {
   });
 }
 
+export type BigQueryLinkInfo = {
+  name: string;
+  project: string;
+  dataset_location: string;
+  daily_export_enabled: boolean;
+  streaming_export_enabled: boolean;
+};
+
+export async function linkBigQueryExport(options?: { streaming_export?: boolean }) {
+  return request<{
+    grant: { status: string; name?: string };
+    bigquery_link: { status: string; name?: string; project?: string };
+    export_dataset_id_hint: string;
+    gcp_project_id: string;
+    message: string;
+  }>("/api/ga4/link-bigquery-export", {
+    method: "POST",
+    body: JSON.stringify({ streaming_export: options?.streaming_export ?? false }),
+  });
+}
+
+export async function fetchBigQueryExportStatus() {
+  return request<{ property_id: string; bigquery_links: BigQueryLinkInfo[] }>(
+    "/api/ga4/bigquery-export-status"
+  );
+}
+
 export type AgentTraceEvent = Record<string, unknown>;
 
 export type AnalysisResponse = {

@@ -16,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from dotenv import load_dotenv
 from google.analytics.admin_v1beta import AnalyticsAdminServiceClient
+from google.api_core import exceptions as gapi_exc
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -33,6 +35,7 @@ from backend.analytics.raw_reports import get_all_core_reports
 from backend.data.ga4_schema import CORE_REPORT_DIMENSIONS, CORE_REPORT_METRICS
 from backend.data.ga4_service import fetch_ga4_report, ga4_request_context
 from backend.data.preprocess import ga4_to_dataframe
+from backend import ga4_managed_export
 
 
 # ------------------------------------------------------------------------------
@@ -48,11 +51,21 @@ configure_agent_logging()                                                    # S
 
 app = FastAPI()                                                              # FastAPI app instance for the backend.
 
-OAUTH_SCOPES = ["https://www.googleapis.com/auth/analytics.readonly"]        # GA4 read-only scope for OAuth.
+OAUTH_SCOPES = [                                                             # GA4 OAuth scopes: reporting + managed BQ export setup.
+    "https://www.googleapis.com/auth/analytics.readonly",
+    "https://www.googleapis.com/auth/analytics.edit",
+    "https://www.googleapis.com/auth/analytics.manage.users",
+]
 SESSION_COOKIE = "ga4_session"                                               # Cookie name for session tracking.
 SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30                                   # 30 days; keep cookie across browser restarts.
 SESSIONS: dict[str, dict[str, Any]] = {}                                     # In-memory session store keyed by session_id.
 STATE_INDEX: dict[str, str] = {}                                             # Map OAuth state -> session_id for callbacks.
+
+# Shown when OAuth tokens are missing, revoked, expired, or lack required scopes (user must use Reconnect).
+_RECONNECT_DETAIL = (
+    "Google session expired or missing required permissions. "
+    "Use Reconnect / Connect GA4 to sign in again (needed after adding new OAuth scopes)."
+)
 
 
 # ------------------------------------------------------------------------------
@@ -182,20 +195,43 @@ def _credentials_to_dict(credentials: Credentials) -> dict[str, Any]:        # F
     }                                                                         # Return a serializable credential dict.
 
 
-# This function reconstructs credentials and refreshes them if expired.
+# This function reconstructs credentials, enforces required OAuth scopes, and refreshes when invalid.
 def _build_user_credentials(
     session: dict[str, Any], session_id: str | None = None
 ) -> Credentials | None:  # Restore credentials from session.
-    data = session.get("credentials")                                        # Stored credential dict.
+    data = session.get("credentials")
     if not data:
-        return None                                                          # Return None when no credentials saved.
-    credentials = Credentials(**data)                                        # Rebuild Credentials from dict.
-    if credentials.expired and credentials.refresh_token:
-        credentials.refresh(GoogleAuthRequest())                             # Refresh tokens on demand.
-        session["credentials"] = _credentials_to_dict(credentials)           # Persist refreshed credentials.
+        return None
+    stored_scopes = set(data.get("scopes") or [])
+    if not set(OAUTH_SCOPES).issubset(stored_scopes):
+        session.pop("credentials", None)
         if session_id:
             _persist_session(session_id)
-    return credentials                                                        # Return valid Credentials object.
+        return None
+    try:
+        credentials = Credentials(**data)
+    except (TypeError, ValueError):
+        session.pop("credentials", None)
+        if session_id:
+            _persist_session(session_id)
+        return None
+    if not credentials.valid:
+        if not credentials.refresh_token:
+            session.pop("credentials", None)
+            if session_id:
+                _persist_session(session_id)
+            return None
+        try:
+            credentials.refresh(GoogleAuthRequest())
+        except RefreshError:
+            session.pop("credentials", None)
+            if session_id:
+                _persist_session(session_id)
+            return None
+        session["credentials"] = _credentials_to_dict(credentials)
+        if session_id:
+            _persist_session(session_id)
+    return credentials
 
 
 # This function enforces that a user is authenticated and has a property selected.
@@ -208,7 +244,7 @@ def _require_user_context(request: Request) -> tuple[Credentials, str]:      # V
         raise HTTPException(status_code=401, detail="Not connected to GA4.")
     credentials = _build_user_credentials(session, session_id)               # Credentials for GA4 API calls.
     if not credentials:
-        raise HTTPException(status_code=401, detail="Not connected to GA4.")
+        raise HTTPException(status_code=401, detail=_RECONNECT_DETAIL)
     property_id = session.get("property_id")                                 # Selected GA4 property id.
     if not property_id:
         raise HTTPException(status_code=400, detail="No GA4 property selected.")
@@ -314,7 +350,8 @@ def auth_status(request: Request):                                           # C
     session = _get_session_dict(session_id)
     if session is None:
         return {"connected": False}                                          # Return false when no session.
-    return {"connected": bool(session.get("credentials"))}                   # Return true when credentials exist.
+    credentials = _build_user_credentials(session, session_id)               # Validates scopes + refresh.
+    return {"connected": credentials is not None}
 
 
 # This endpoint lists GA4 properties accessible to the user.
@@ -328,10 +365,13 @@ def list_properties(request: Request):                                       # F
         raise HTTPException(status_code=401, detail="Not connected to GA4.")
     credentials = _build_user_credentials(session, session_id)               # Build credentials for API calls.
     if not credentials:
-        raise HTTPException(status_code=401, detail="Not connected to GA4.")
+        raise HTTPException(status_code=401, detail=_RECONNECT_DETAIL)
 
     client = AnalyticsAdminServiceClient(credentials=credentials)            # Admin API client for properties.
-    summaries = client.list_account_summaries()                              # Fetch account summaries.
+    try:
+        summaries = client.list_account_summaries()                          # Fetch account summaries.
+    except gapi_exc.Unauthenticated:
+        raise HTTPException(status_code=401, detail=_RECONNECT_DETAIL)
     properties = []                                                          # Accumulate property metadata for UI.
     for summary in summaries:
         for prop in summary.property_summaries:
@@ -367,6 +407,103 @@ def select_property(
     session["property_id"] = payload.property_id                             # Store selection for later queries.
     _persist_session(session_id)
     return {"selected": payload.property_id}                                 # Return selection confirmation.
+
+
+class LinkBigQueryExportRequest(BaseModel):
+    streaming_export: bool = False                                           # If true, enable streaming export (higher cost).
+
+
+# This endpoint runs the managed export flow: user OAuth grants the platform SA on the property, then the SA creates the BigQuery link.
+@app.post("/api/ga4/link-bigquery-export")
+def link_bigquery_export(
+    request: Request,
+    payload: LinkBigQueryExportRequest = LinkBigQueryExportRequest(),
+) -> dict[str, Any]:
+    session_id = _get_session_id(request)
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Not connected to GA4.")
+    session = _get_session_dict(session_id)
+    if session is None:
+        raise HTTPException(status_code=401, detail="Not connected to GA4.")
+    credentials = _build_user_credentials(session, session_id)
+    if not credentials:
+        raise HTTPException(status_code=401, detail=_RECONNECT_DETAIL)
+    property_id = session.get("property_id")
+    if not property_id:
+        raise HTTPException(status_code=400, detail="No GA4 property selected.")
+
+    try:
+        cfg = ga4_managed_export.get_link_config()
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    streaming = payload.streaming_export
+
+    try:
+        grant_result = ga4_managed_export.grant_service_account_property_access(
+            credentials,
+            property_id,
+            cfg["service_account_email"],
+        )
+    except gapi_exc.Unauthenticated:
+        raise HTTPException(status_code=401, detail=_RECONNECT_DETAIL)
+    except gapi_exc.PermissionDenied:
+        raise HTTPException(
+            status_code=403,
+            detail=ga4_managed_export.PERMISSION_DENIED_GRANT_HELP,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not grant service account on GA4 property: {exc}",
+        )
+
+    try:
+        link_result = ga4_managed_export.create_managed_bigquery_link(
+            property_id,
+            cfg["gcp_project_id"],
+            cfg["dataset_location"],
+            daily_export=True,
+            streaming_export=streaming,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not create BigQuery link: {exc}",
+        )
+
+    dataset_hint = f"analytics_{property_id}"
+    return {
+        "grant": grant_result,
+        "bigquery_link": link_result,
+        "export_dataset_id_hint": dataset_hint,
+        "gcp_project_id": cfg["gcp_project_id"],
+        "message": (
+            "GA4 will create or use a BigQuery dataset named like "
+            f"`{dataset_hint}` in your GCP project. Daily tables may take up to 24–48h to appear."
+        ),
+    }
+
+
+# Lists existing BigQuery export links for the selected property (requires service account env).
+@app.get("/api/ga4/bigquery-export-status")
+def bigquery_export_status(request: Request) -> dict[str, Any]:
+    session_id = _get_session_id(request)
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Not connected to GA4.")
+    session = _get_session_dict(session_id)
+    if session is None:
+        raise HTTPException(status_code=401, detail="Not connected to GA4.")
+    property_id = session.get("property_id")
+    if not property_id:
+        raise HTTPException(status_code=400, detail="No GA4 property selected.")
+    try:
+        links = ga4_managed_export.list_bigquery_links_for_property(property_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"property_id": property_id, "bigquery_links": links}
 
 
 # ------------------------------------------------------------------------------
