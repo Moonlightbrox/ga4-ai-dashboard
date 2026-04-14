@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -32,12 +33,22 @@ PERMISSION_DENIED_GRANT_HELP = (
 
 
 def _load_service_account_credentials() -> service_account.Credentials:
+    key_json = os.getenv("GA4_LINK_SERVICE_ACCOUNT_JSON", "").strip()
+    if key_json:
+        try:
+            info = json.loads(key_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("GA4_LINK_SERVICE_ACCOUNT_JSON is not valid JSON.") from exc
+        return service_account.Credentials.from_service_account_info(
+            info, scopes=_SA_SCOPES
+        )
+
     key_path = os.getenv("GA4_LINK_SERVICE_ACCOUNT_FILE") or os.getenv(
         "GOOGLE_APPLICATION_CREDENTIALS"
     )
     if not key_path or not os.path.isfile(key_path):
         raise ValueError(
-            "Set GA4_LINK_SERVICE_ACCOUNT_FILE or GOOGLE_APPLICATION_CREDENTIALS to a service account JSON key path."
+            "Set GA4_LINK_SERVICE_ACCOUNT_JSON, GA4_LINK_SERVICE_ACCOUNT_FILE, or GOOGLE_APPLICATION_CREDENTIALS."
         )
     return service_account.Credentials.from_service_account_file(
         key_path, scopes=_SA_SCOPES
