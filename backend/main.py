@@ -466,6 +466,9 @@ def link_bigquery_export(
             daily_export=True,
             streaming_export=streaming,
         )
+    except RuntimeError as exc:
+        # ga4_managed_export re-raises PermissionDenied as RuntimeError with message.
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=502,

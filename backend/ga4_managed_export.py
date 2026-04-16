@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
@@ -37,6 +38,8 @@ def _load_service_account_credentials() -> service_account.Credentials:
     if key_json:
         try:
             info = json.loads(key_json)
+            email = info.get("client_email")
+            logging.info(f"Loading service account credentials from JSON env var: {email}")
         except json.JSONDecodeError as exc:
             raise ValueError("GA4_LINK_SERVICE_ACCOUNT_JSON is not valid JSON.") from exc
         return service_account.Credentials.from_service_account_info(
@@ -50,6 +53,7 @@ def _load_service_account_credentials() -> service_account.Credentials:
         raise ValueError(
             "Set GA4_LINK_SERVICE_ACCOUNT_JSON, GA4_LINK_SERVICE_ACCOUNT_FILE, or GOOGLE_APPLICATION_CREDENTIALS."
         )
+    logging.info(f"Loading service account credentials from file: {key_path}")
     return service_account.Credentials.from_service_account_file(
         key_path, scopes=_SA_SCOPES
     )
@@ -124,13 +128,25 @@ def create_managed_bigquery_link(
         streaming_export_enabled=streaming_export,
     )
 
+    logging.info(f"Attempting to create BigQuery link for property {property_id} to project {project_resource}")
+
     try:
         created = client.create_big_query_link(
             CreateBigQueryLinkRequest(parent=parent, bigquery_link=link)
         )
+        logging.info(f"Successfully created BigQuery link: {created.name}")
         return {"status": "created", "name": created.name, "project": created.project}
     except gexc.AlreadyExists:
+        logging.info(f"BigQuery link already exists for property {property_id}")
         return {"status": "already_exists"}
+    except gexc.PermissionDenied as exc:
+        # Log full details for debugging
+        logging.error(f"PermissionDenied creating BigQuery link: {exc.message}. Details: {exc.details}")
+        # Re-raise with message to be caught by main.py
+        raise RuntimeError(f"GA4 Permission Denied: {exc.message}") from exc
+    except Exception as exc:
+        logging.error(f"Unexpected error creating BigQuery link: {exc}")
+        raise
 
 
 def list_bigquery_links_for_property(
