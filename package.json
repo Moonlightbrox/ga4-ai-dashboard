@@ -1,0 +1,24 @@
+{
+  "name": "ga4-ai-dashboard",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Moonlightbrox/ga4-ai-dashboard.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Moonlightbrox/ga4-ai-dashboard/issues"
+  },
+  "homepage": "https://github.com/Moonlightbrox/ga4-ai-dashboard#readme",
+  "devDependencies": {
+    "gitnexus": "^1.6.1"
+  }
+}

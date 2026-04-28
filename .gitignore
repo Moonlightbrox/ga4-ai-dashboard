@@ -31,5 +31,19 @@ backend/logs/*.log
 # Legacy root logs/ (generated if old path was used)
 /logs/
 
-# OAuth session persistence (SQLite)
+# oauth session persistence (sqlite)
 backend/session_store.sqlite3
+
+# build artifacts / scratch
+frontend/tsconfig.tsbuildinfo
+_tmp_xlsx/
+_tmp_xlsx.zip
+
+# gitnexus
+.gitnexus/
+~/.gitnexus/
+AGENTS.md
+CLAUDE.md
+
+# Per-user IDE config (Cursor / Claude skills)
+.claude/
